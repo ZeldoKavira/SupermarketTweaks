@@ -23,7 +23,7 @@
 param(
     [string] $GameDir,
     [string] $Token = $env:GH_TOKEN,
-    [string] $Repo  = 'REPO_PLACEHOLDER',
+    [string] $Repo  = 'ZeldoKavira/SupermarketTweaks',
     [switch] $Force
 )
 
