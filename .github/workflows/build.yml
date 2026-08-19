@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write        # needed to publish the rolling release
 
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +50,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # No 'latest' release exists on the first run; that is not a failure.
           gh release delete latest --yes --cleanup-tag 2>$null
+          $global:LASTEXITCODE = 0
           gh release create latest SupermarketTweaks/bin/Release/SupermarketTweaks.dll `
             --title "Latest build" `
             --notes "Automatic build of $env:GITHUB_SHA"
