@@ -23,26 +23,21 @@ simulation. Running the speed boost as a client just desyncs your own view.
 
 ## Installing
 
-### Update automatically whenever the game launches (recommended)
+No git, no GitHub CLI, no account needed.
 
-Clone the repo once:
+Download **[installer/PreLaunch.bat](installer/PreLaunch.bat)** and save it anywhere (it is the
+only file you need). Then in Steam, right-click **Supermarket Together > Properties > Launch
+Options** and set:
 
-    gh repo clone ZeldoKavira/SupermarketTweaks "%USERPROFILE%\SupermarketTweaks"
+    cmd /c ""C:\path	o\PreLaunch.bat" && %command%"
 
-then in Steam, right-click **Supermarket Together > Properties > Launch Options** and set:
+Every launch now installs BepInEx if it is missing and updates the mod to the newest build first.
+It fetches the installer script itself each time too, so nothing on disk goes stale.
 
-    cmd /c ""%USERPROFILE%\SupermarketTweaks\installer\PreLaunch.bat" && %command%"
+It is deliberately best-effort: no network, GitHub unreachable, game already running - it reports
+the problem and the game starts anyway.
 
-Every launch now refreshes the scripts and the mod first. `PreLaunch.bat` is deliberately
-best-effort: no network, no git, no GitHub - it still hands off and the game starts.
-
-### Or update by hand
-
-Run `installer/Sync.bat` (updates the scripts too) or `installer/Update.bat`. Safe to run repeatedly — it finds the game, installs BepInEx if
-missing, and only replaces the plugin when the build actually changed.
-
-The repo is private, so the download needs either the GitHub CLI signed in (`gh auth login`) or
-a token (`-Token ghp_xxx`).
+To install or update by hand instead, run `installer/Update.bat`.
 
 ## Building
 

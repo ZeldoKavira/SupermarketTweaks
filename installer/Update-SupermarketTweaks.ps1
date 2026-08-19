@@ -1,28 +1,23 @@
 <#
 .SYNOPSIS
-    Install or update Supermarket Tweaks (and BepInEx) from the private GitHub repo.
+    Install or update Supermarket Tweaks (and BepInEx).
 
 .DESCRIPTION
     Safe to run over and over - that is the point. It finds the game, makes sure BepInEx is
     present, then downloads the newest build and only replaces the plugin if it actually differs.
 
-    The repo is PRIVATE, so downloading the plugin needs credentials. In order of preference:
-
-      1. the GitHub CLI, already signed in as someone with access   (gh auth login)
-      2. a personal access token in $env:GH_TOKEN or -Token
-
-    BepInEx itself comes from its own public release, so that part never needs auth.
+    Nothing else needs installing: no git, no GitHub CLI, no account. Both downloads are plain
+    HTTPS from public releases.
 
 .EXAMPLE
     .\Update-SupermarketTweaks.ps1
 
 .EXAMPLE
-    .\Update-SupermarketTweaks.ps1 -Token ghp_xxx -GameDir "D:\Steam\steamapps\common\Supermarket Together"
+    .\Update-SupermarketTweaks.ps1 -GameDir "D:\Steam\steamapps\common\Supermarket Together"
 #>
 [CmdletBinding()]
 param(
     [string] $GameDir,
-    [string] $Token = $env:GH_TOKEN,
     [string] $Repo  = 'ZeldoKavira/SupermarketTweaks',
     [switch] $Force,
     # Launch-time mode: never block the game. Problems are reported and then swallowed, because
@@ -36,6 +31,9 @@ $GameExe     = 'Supermarket Together.exe'
 $GameFolder  = 'Supermarket Together'
 $PluginName  = 'SupermarketTweaks.dll'
 $BepInExUrl  = 'https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.3/BepInEx_win_x64_5.4.23.3.zip'
+# CI republishes the rolling 'latest' release on every push to main, so this URL is always the
+# newest build and needs no API call to resolve.
+$PluginUrl   = "https://github.com/$Repo/releases/download/latest/$PluginName"
 
 function Write-Step($msg) { Write-Host "`n$msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "    $msg" -ForegroundColor Green }
@@ -131,45 +129,13 @@ if (-not (Test-Path $pluginDir)) { New-Item -ItemType Directory -Force -Path $pl
 
 Write-Step 'Downloading the latest build...'
 $dl = Join-Path $env:TEMP ('SupermarketTweaks_' + [Guid]::NewGuid().ToString('N') + '.dll')
-$gh = Get-Command gh -ErrorAction SilentlyContinue
-
-if ($gh) {
-    try {
-        # Writes into a temp folder because gh picks the filename from the asset.
-        $stage = Join-Path $env:TEMP ([Guid]::NewGuid().ToString('N'))
-        New-Item -ItemType Directory -Force -Path $stage | Out-Null
-        & gh release download latest --repo $Repo --pattern $PluginName --dir $stage --clobber
-        if ($LASTEXITCODE -ne 0) { throw "gh exited with $LASTEXITCODE" }
-        Move-Item (Join-Path $stage $PluginName) $dl -Force
-        Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Ok 'Downloaded with the GitHub CLI.'
-    } catch {
-        Write-Warn2 "GitHub CLI failed: $($_.Exception.Message)"
-        $gh = $null
-    }
-}
-
-if (-not (Test-Path $dl)) {
-    if (-not $Token) {
-        Fail ("Need access to the private repo. Either:`n" +
-              "  - install the GitHub CLI and run:  gh auth login`n" +
-              "  - or pass a token:  .\Update-SupermarketTweaks.ps1 -Token ghp_xxxx")
-    }
-    try {
-        # The releases API gives the asset id; the asset itself needs an octet-stream Accept
-        # header or GitHub hands back JSON metadata instead of the file.
-        $headers = @{ Authorization = "Bearer $Token"; 'User-Agent' = 'SupermarketTweaks-Updater' }
-        $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/latest" -Headers $headers
-        $asset = $rel.assets | Where-Object { $_.name -eq $PluginName } | Select-Object -First 1
-        if (-not $asset) { Fail "The 'latest' release has no $PluginName asset yet. Has the build run?" }
-
-        $headers['Accept'] = 'application/octet-stream'
-        Invoke-WebRequest -Uri "https://api.github.com/repos/$Repo/releases/assets/$($asset.id)" `
-                          -Headers $headers -OutFile $dl -UseBasicParsing
-        Write-Ok 'Downloaded with token.'
-    } catch {
-        Fail "Download failed: $($_.Exception.Message)"
-    }
+try {
+    # -UseBasicParsing keeps this working on machines where Internet Explorer's engine was
+    # never initialised, the usual cause of Invoke-WebRequest failing on a clean install.
+    Invoke-WebRequest -Uri $PluginUrl -OutFile $dl -UseBasicParsing
+    Write-Ok 'Downloaded.'
+} catch {
+    Fail "Download failed: $($_.Exception.Message)"
 }
 
 # ---------------------------------------------------------------- install if changed
