@@ -24,7 +24,10 @@ param(
     [string] $GameDir,
     [string] $Token = $env:GH_TOKEN,
     [string] $Repo  = 'ZeldoKavira/SupermarketTweaks',
-    [switch] $Force
+    [switch] $Force,
+    # Launch-time mode: never block the game. Problems are reported and then swallowed, because
+    # being offline or GitHub being down must not stop someone playing.
+    [switch] $Quiet
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,7 +40,12 @@ $BepInExUrl  = 'https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.3/B
 function Write-Step($msg) { Write-Host "`n$msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "    $msg" -ForegroundColor Green }
 function Write-Warn2($msg){ Write-Host "    $msg" -ForegroundColor Yellow }
-function Fail($msg)       { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
+function Fail($msg) {
+    Write-Host "ERROR: $msg" -ForegroundColor Red
+    # exit 0 under -Quiet so a pre-launch hook still hands off to the game.
+    if ($Quiet) { Write-Host 'Continuing without updating.' -ForegroundColor Yellow; exit 0 }
+    exit 1
+}
 
 # ---------------------------------------------------------------- find the game
 
@@ -91,7 +99,10 @@ Write-Ok $GameDir
 
 # The plugin file is locked while the game runs, and a half-written DLL is worse than a stale one.
 $running = Get-Process -Name 'Supermarket Together' -ErrorAction SilentlyContinue
-if ($running) { Fail 'Supermarket Together is running. Close it and run this again.' }
+if ($running) {
+    if ($Quiet) { Write-Warn2 'Game already running; leaving the installed build alone.'; exit 0 }
+    Fail 'Supermarket Together is running. Close it and run this again.'
+}
 
 # ---------------------------------------------------------------- BepInEx
 
