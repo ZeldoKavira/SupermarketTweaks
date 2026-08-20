@@ -140,30 +140,48 @@ namespace SupermarketTweaks
 
         // Only protects US. A vanilla player still disconnects on our packets, which is exactly why
         // the client has to speak first.
-        private static bool _tolerantDone;
+        private static bool _tolerantLogged;
 
         private static void MakeTolerant()
         {
-            if (_tolerantDone) return;
-            _tolerantDone = true;
+            // Set every tick, not once. These are statics Mirror owns, and the handler wrapper
+            // captures the value at REGISTRATION time - so a latch here could leave a handler
+            // registered with the old, disconnect-happy behaviour after a session restart.
             NetworkClient.exceptionsDisconnect = false;
             NetworkServer.exceptionsDisconnect = false;
+
+            if (_tolerantLogged) return;
+            _tolerantLogged = true;
             Plugin.Log.LogInfo("[NetSync] Unknown-packet disconnects disabled for this side.");
         }
 
+        // Re-registered every tick, deliberately, and with ReplaceHandler rather than
+        // RegisterHandler.
+        //
+        // Registering once was the bug that broke the whole feature. Mirror wipes the table on
+        // shutdown -
+        //
+        //   connections.Clear(); connectionsCopy.Clear(); handlers.Clear();   // NetworkServer
+        //
+        // - so the moment a session ends the handler is gone, while a latched "already registered"
+        // flag says otherwise. The host then silently ignores every hello forever, which is exactly
+        // what the client log showed: 300 attempts, no reply.
+        //
+        // ReplaceHandler because RegisterHandler logs a warning when the id is already present, and
+        // this runs once a second. It also matters that the wrapper captures exceptionsDisconnect
+        // AT REGISTRATION TIME - re-registering after MakeTolerant is what makes the tolerance
+        // actually apply.
         private static void EnsureClientHandlers()
         {
-            if (_clientRegistered) return;
-            _clientRegistered = true;
             // requireAuthentication: false - this arrives before the game considers us settled.
-            NetworkClient.RegisterHandler<SmtMessage>(OnClientMessage, false);
+            NetworkClient.ReplaceHandler<SmtMessage>(OnClientMessage, false);
+            _clientRegistered = true;
         }
 
         private static void EnsureServerHandlers()
         {
-            if (_serverRegistered) return;
+            NetworkServer.ReplaceHandler<SmtMessage>(OnServerMessage, false);
             _serverRegistered = true;
-            NetworkServer.RegisterHandler<SmtMessage>(OnServerMessage, false);
         }
 
         private static void OnServerMessage(NetworkConnectionToClient conn, SmtMessage msg)
