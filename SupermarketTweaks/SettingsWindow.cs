@@ -68,7 +68,12 @@ namespace SupermarketTweaks
 
             // Manual sweeps stay available to a client on purpose - CmdUpdateProductPrice accepts
             // them, and it is useful to be able to force one without asking the host.
-            GUILayout.Label($"   sales: {AutoSales.Status}", Rich());
+            GUILayout.Label($"   sales: {AutoSales.Status}   |   theft: {AntiTheft.Status}", Rich());
+
+            int spawned = ThiefWatchDriver.SpawnedThieves, checkout = ThiefWatchDriver.CheckoutThieves;
+            if (spawned + checkout > 0)
+                GUILayout.Label($"   thieves this session: <b>{spawned} spawned</b> (bad luck, cameras help) " +
+                                $"| <b>{checkout} turned away from a till</b> (add checkouts)", Rich());
 
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Reprice everything now", GUILayout.Width(220f))

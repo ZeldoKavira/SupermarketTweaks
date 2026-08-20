@@ -134,6 +134,90 @@ namespace SupermarketTweaks
         }
     }
 
+    // Report which KIND of thief each one is.
+    //
+    // The game marks isAThief in two unrelated places, and they call for opposite responses:
+    //
+    //   SpawnCustomerNPC   a dice roll at spawn, gated on gameDay > 7 and reduced by surveillance.
+    //                      Bad luck. Cameras help; nothing else does.
+    //   the checkout state a customer who finishes shopping and finds CheckForAFreeCheckout() == -1
+    //                      becomes a thief outright. No roll, no day gate, no mitigation - it is
+    //                      purely a queue-capacity failure, and it is the one you can fix.
+    //
+    // Neither site is a method worth patching - one is inside a coroutine, the other buried in a
+    // state machine - but the two are trivially separable by WHEN the flag appears. A customer
+    // already flagged the first time we ever see them was born one; a customer we watched shopping
+    // who then flips was turned away from a till.
+    public class ThiefWatchDriver : MonoBehaviour
+    {
+        private float _next;
+        private readonly Dictionary<int, bool> _seen = new Dictionary<int, bool>();
+
+        internal static int SpawnedThieves, CheckoutThieves;
+
+        private void Update()
+        {
+            if (Time.unscaledTime < _next) return;
+            _next = Time.unscaledTime + 1f;
+
+            try
+            {
+                if (!AntiTheftConfig.Log.Value) return;
+
+                // Server-side only: a client sees neither the spawn roll nor the checkout decision.
+                if (NetworkClient.active && !NetworkServer.active) return;
+
+                var mgr = NPC_Manager.Instance;
+                var parent = mgr != null ? mgr.customersnpcParentOBJ : null;
+                if (parent == null) return;
+
+                var present = new HashSet<int>();
+
+                foreach (Transform child in parent.transform)
+                {
+                    var info = child.GetComponent<NPC_Info>();
+                    if (info == null) continue;
+
+                    int id = info.GetInstanceID();
+                    present.Add(id);
+
+                    bool wasThief;
+                    if (!_seen.TryGetValue(id, out wasThief))
+                    {
+                        // First sight. Already flagged means the spawn roll caught them.
+                        _seen[id] = info.isAThief;
+                        if (info.isAThief)
+                        {
+                            SpawnedThieves++;
+                            Plugin.Log.LogInfo($"[Theft] SPAWNED thief arrived (roll at spawn) - " +
+                                               $"day {(GameData.Instance != null ? GameData.Instance.gameDay : 0)}. " +
+                                               $"Cameras reduce these; nothing else does.");
+                        }
+                        continue;
+                    }
+
+                    if (!wasThief && info.isAThief)
+                    {
+                        _seen[id] = true;
+                        CheckoutThieves++;
+                        Plugin.Log.LogWarning($"[Theft] TURNED thief - found no free checkout, " +
+                                              $"carrying {info.productsIDCarrying?.Count ?? 0} item(s). " +
+                                              $"This one is queue capacity, not bad luck.");
+                    }
+                }
+
+                // Drop anyone who has left, so the table cannot grow without bound.
+                if (_seen.Count > present.Count)
+                {
+                    var gone = new List<int>();
+                    foreach (var kv in _seen) if (!present.Contains(kv.Key)) gone.Add(kv.Key);
+                    foreach (var id in gone) _seen.Remove(id);
+                }
+            }
+            catch (Exception e) { Plugin.Log.LogError($"[Theft] watch: {e.Message}"); }
+        }
+    }
+
     // The door decides a thief is fair game here, and sounds the alarm in the same breath.
     [HarmonyPatch(typeof(AntiTheftBehaviour), "CheckThief")]
     public static class Patch_AntiTheftBehaviour_CheckThief

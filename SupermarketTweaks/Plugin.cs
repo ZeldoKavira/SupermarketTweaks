@@ -43,6 +43,7 @@ namespace SupermarketTweaks
             go.AddComponent<AutoPriceDriver>();
             go.AddComponent<GameSpeedDriver>();
             go.AddComponent<AutoSalesDriver>();
+            go.AddComponent<ThiefWatchDriver>();
             go.AddComponent<StaffRolesDriver>();
             go.AddComponent<NetSyncDriver>();
             go.AddComponent<SettingsWindow>();
