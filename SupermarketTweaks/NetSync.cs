@@ -65,7 +65,13 @@ namespace SupermarketTweaks
         internal static string Status = "not connected";
 
         private static bool _clientRegistered, _serverRegistered;
-        private static bool _saidHello;
+
+        // Handshake state. _acked flips as soon as the host says anything back, which is the only
+        // proof the two sides can actually talk.
+        private static bool _acked;
+        private static int _helloCount;
+        private static float _nextHello;
+        private const float HelloRetrySeconds = 5f;
 
         // Clients that have answered, so the host never sends to someone who might be vanilla.
         private static readonly HashSet<int> _moddedClients = new HashSet<int>();
@@ -81,24 +87,50 @@ namespace SupermarketTweaks
                 if (NetworkServer.active) EnsureServerHandlers();
                 if (NetworkClient.active) EnsureClientHandlers();
 
-                // A pure client introduces itself once per connection. The host is its own client
-                // in host mode, and has nothing to tell itself.
+                if (NetworkServer.active)
+                {
+                    int others = NetworkServer.connections.Count - 1;   // the host is one of them
+                    Status = _moddedClients.Count > 0
+                        ? $"host - {_moddedClients.Count} modded client(s)"
+                        : others > 0
+                            ? $"host - {others} client(s), NONE with the mod yet"
+                            : "host - no clients";
+                }
+
+                // A pure client introduces itself. The host is its own client in host mode and has
+                // nothing to tell itself.
+                //
+                // This RETRIES until the host answers, and that is the whole point. Sending once
+                // and hoping was the bug: the hello can be thrown away - the host's handler is
+                // registered from its own Tick, so a client that connects in the wrong second sends
+                // into a socket with no handler for that id - and losing it once killed the entire
+                // sync for the session, silently, with the host never knowing a modded client was
+                // there. Nothing else recovers it, because the host only ever talks to clients that
+                // have said hello.
                 if (NetworkClient.isConnected && !NetworkServer.active)
                 {
-                    if (!_saidHello)
+                    if (!_acked && Time.unscaledTime >= _nextHello)
                     {
-                        _saidHello = true;
+                        _nextHello = Time.unscaledTime + HelloRetrySeconds;
+                        _helloCount++;
+
                         NetworkClient.Send(new SmtMessage
                         {
                             Kind = Hello,
                             Payload = typeof(NetSync).Assembly.GetName().Version.ToString()
                         }, 0);
-                        Status = "said hello, waiting for host settings";
+
+                        Status = $"waiting for host (hello x{_helloCount})";
+                        if (_helloCount == 1 || _helloCount % 5 == 0)
+                            Plugin.Log.LogInfo($"[NetSync] Told the host we have the mod " +
+                                               $"(attempt {_helloCount}); no reply yet.");
                     }
                 }
                 else if (!NetworkClient.isConnected)
                 {
-                    _saidHello = false;
+                    _acked = false;
+                    _helloCount = 0;
+                    _nextHello = 0f;
                     _moddedClients.Clear();
                     if (Status != "off") Status = "not connected";
                 }
@@ -164,6 +196,12 @@ namespace SupermarketTweaks
         {
             try
             {
+                if (!_acked)
+                {
+                    _acked = true;
+                    Plugin.Log.LogInfo("[NetSync] Host answered; settings and speed will follow it.");
+                }
+
                 switch (msg.Kind)
                 {
                     case Settings:
