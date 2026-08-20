@@ -29,6 +29,7 @@ namespace SupermarketTweaks
 
             AutoPriceConfig.Init(Config);
             GameSpeedConfig.Init(Config);
+            AntiTheftConfig.Init(Config);
             AutoSalesConfig.Init(Config);
             StaffRolesConfig.Init(Config);
             NetSyncConfig.Init(Config);

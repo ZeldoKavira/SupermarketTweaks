@@ -23,6 +23,11 @@ BepInEx 5 mod for **Supermarket Together**.
   `productsIDOnSale` and `productsSaleDiscount` outright, so every day begins with no sales
   running. This remembers what was on and puts it back. An empty sale slot is a wasted roll in
   `ExtraProductsOnSaleToAdd` — the only mechanism that *adds* items to a shopping list.
+- **Theft is manageable at speed** — the game has no health or damage; the only effect a hit has
+  on a thief is knocking stolen goods loose in `NPC_Info.AuxiliarAnimationPlay`. Two settings make
+  that survive fast-forward: drops scale with the game speed multiplier, and the anti-theft door
+  alarm drops you to 1x until the thief is empty-handed or gone. Fast-forward is the one thing that
+  makes theft unmanageable, because you get proportionally less real time to react.
 - **In-game config** — F1. F5 toggles the speed boost.
 
 ## Multiplayer

@@ -51,7 +51,15 @@ namespace SupermarketTweaks
         }
 
         internal static bool On => Enabled != null && Enabled.Value;
+
+        // What the player asked for, ignoring any temporary override.
         internal static float Target => On ? Mathf.Clamp(Speed.Value, 0.25f, 10f) : 1f;
+
+        // What we actually apply. The anti-theft alarm forces normal speed so a robbery can be
+        // dealt with at a human pace - it is the one event where fast-forward actively costs you
+        // money, and you cannot react to it in a third of the time.
+        internal static float Effective =>
+            (AntiTheftConfig.SlowOn && AntiTheft.AlarmActive) ? 1f : Target;
     }
 
     public class GameSpeedDriver : MonoBehaviour
@@ -63,6 +71,7 @@ namespace SupermarketTweaks
         private float _next;
         private float _lastApplied = -1f;
         private int _lastDay = int.MinValue;
+        private bool _lastAlarm;
 
         internal static string Status = "off";
 
@@ -83,7 +92,7 @@ namespace SupermarketTweaks
 
                 // The end-of-day reset writes timeScale directly, so the only reliable way to catch
                 // it is to notice the value is no longer what we set.
-                bool drifted = !Mathf.Approximately(Time.timeScale, GameSpeedConfig.Target);
+                bool drifted = !Mathf.Approximately(Time.timeScale, GameSpeedConfig.Effective);
 
                 var data = GameData.Instance;
                 bool newDay = false;
@@ -93,15 +102,22 @@ namespace SupermarketTweaks
                     else if (data.gameDay != _lastDay) { _lastDay = data.gameDay; newDay = true; }
                 }
 
-                if (drifted && (GameSpeedConfig.ReapplyOnNewDay.Value || newDay || _lastApplied < 0f))
-                    Apply(force: false);
+                // The alarm starting or ending has to take effect whatever ReapplyOnNewDay says -
+                // that setting is about the end-of-day reset, not about this.
+                bool alarm = AntiTheftConfig.SlowOn && AntiTheft.AlarmActive;
+                bool alarmChanged = alarm != _lastAlarm;
+                _lastAlarm = alarm;
+
+                if (drifted && (alarmChanged || GameSpeedConfig.ReapplyOnNewDay.Value
+                                || newDay || _lastApplied < 0f))
+                    Apply(force: alarmChanged);
             }
             catch (Exception e) { Plugin.Log.LogError($"[GameSpeed] {e.Message}"); }
         }
 
         private void Apply(bool force)
         {
-            float target = GameSpeedConfig.Target;
+            float target = GameSpeedConfig.Effective;
 
             // Never fight a real pause. The game stops time for menus and events, and stamping our
             // value over a zero timeScale would resume the world underneath a paused player.
@@ -115,9 +131,13 @@ namespace SupermarketTweaks
                     : _baseFixedDelta;
 
             _lastApplied = target;
-            Status = GameSpeedConfig.On
-                ? $"{target:0.##}x (timestep {Time.fixedDeltaTime:0.###})"
-                : "off";
+
+            bool held = AntiTheftConfig.SlowOn && AntiTheft.AlarmActive;
+            Status = held
+                ? $"1x - held by alarm (want {GameSpeedConfig.Target:0.##}x)"
+                : GameSpeedConfig.On
+                    ? $"{target:0.##}x (timestep {Time.fixedDeltaTime:0.###})"
+                    : "off";
         }
 
         private void OnDestroy()
