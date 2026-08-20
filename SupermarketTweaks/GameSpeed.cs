@@ -59,7 +59,7 @@ namespace SupermarketTweaks
         // dealt with at a human pace - it is the one event where fast-forward actively costs you
         // money, and you cannot react to it in a third of the time.
         internal static float Effective =>
-            (AntiTheftConfig.SlowOn && AntiTheft.AlarmActive) ? 1f : Target;
+            (AntiTheftConfig.SlowOn && AntiTheft.AnyAlarm) ? 1f : Target;
     }
 
     public class GameSpeedDriver : MonoBehaviour
@@ -104,7 +104,7 @@ namespace SupermarketTweaks
 
                 // The alarm starting or ending has to take effect whatever ReapplyOnNewDay says -
                 // that setting is about the end-of-day reset, not about this.
-                bool alarm = AntiTheftConfig.SlowOn && AntiTheft.AlarmActive;
+                bool alarm = AntiTheftConfig.SlowOn && AntiTheft.AnyAlarm;
                 bool alarmChanged = alarm != _lastAlarm;
                 _lastAlarm = alarm;
 
@@ -132,7 +132,7 @@ namespace SupermarketTweaks
 
             _lastApplied = target;
 
-            bool held = AntiTheftConfig.SlowOn && AntiTheft.AlarmActive;
+            bool held = AntiTheftConfig.SlowOn && AntiTheft.AnyAlarm;
             Status = held
                 ? $"1x - held by alarm (want {GameSpeedConfig.Target:0.##}x)"
                 : GameSpeedConfig.On

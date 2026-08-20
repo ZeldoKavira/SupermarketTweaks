@@ -60,6 +60,7 @@ namespace SupermarketTweaks
     {
         private const string Hello    = "SMT/hello";
         private const string Settings = "SMT/settings";
+        private const string Alarm    = "SMT/alarm";
 
         internal static string Status = "not connected";
 
@@ -144,6 +145,9 @@ namespace SupermarketTweaks
                         _moddedClients.Add(conn.connectionId);
                         Plugin.Log.LogInfo($"[NetSync] Client {conn.connectionId} has the mod (v{msg.Payload}).");
                         SendSettingsTo(conn);
+                        // Catch them up if a robbery is already in progress.
+                        if (AntiTheftConfig.SlowOn && AntiTheft.AlarmActive)
+                            conn.Send(new SmtMessage { Kind = Alarm, Payload = "1" }, 0);
                         break;
 
                     default:
@@ -164,6 +168,14 @@ namespace SupermarketTweaks
                 {
                     case Settings:
                         ApplySettings(msg.Payload);
+                        break;
+
+                    case Alarm:
+                        // Clients cannot work this out for themselves: CheckThief only runs on the
+                        // server (its trigger is enabled in OnStartServer), and productsIDCarrying
+                        // is not a SyncVar, so a client can see neither the alarm nor the thief
+                        // being emptied.
+                        AntiTheft.SetRemoteAlarm(msg.Payload == "1");
                         break;
 
                     default:
@@ -221,6 +233,19 @@ namespace SupermarketTweaks
             conn.Send(new SmtMessage { Kind = Settings, Payload = Serialize() }, 0);
         }
 
+        internal static void BroadcastAlarm(bool active)
+        {
+            try
+            {
+                if (!NetSyncConfig.On || !NetworkServer.active || _moddedClients.Count == 0) return;
+
+                var msg = new SmtMessage { Kind = Alarm, Payload = active ? "1" : "0" };
+                foreach (var kv in NetworkServer.connections)
+                    if (_moddedClients.Contains(kv.Key)) kv.Value.Send(msg, 0);
+            }
+            catch (Exception e) { Plugin.Log.LogError($"[NetSync] alarm: {e.Message}"); }
+        }
+
         // Called when the host changes a pricing setting, so clients don't sit on a stale copy.
         internal static void BroadcastSettings()
         {
@@ -245,6 +270,8 @@ namespace SupermarketTweaks
     {
         private float _next;
         private string _lastSent;
+        private bool _lastAlarm;
+        private bool _knowAlarm;
 
         private void Update()
         {
@@ -258,6 +285,16 @@ namespace SupermarketTweaks
                 // Push changes rather than polling from the client side: cheap, and it means a
                 // client's view updates the moment the host touches a slider.
                 if (!NetworkServer.active || !NetSyncConfig.On) return;
+
+                // Alarm transitions go out immediately - a client held at 1x needs the all-clear
+                // promptly, and this is the only way it can learn of either edge.
+                bool alarm = AntiTheftConfig.SlowOn && AntiTheft.AlarmActive;
+                if (!_knowAlarm) { _knowAlarm = true; _lastAlarm = alarm; }
+                else if (alarm != _lastAlarm)
+                {
+                    _lastAlarm = alarm;
+                    NetSync.BroadcastAlarm(alarm);
+                }
 
                 string now = $"{AutoPriceConfig.Percent.Value}|{AutoPriceConfig.RoundDown.Value}|" +
                              $"{AutoPriceConfig.OnNewDay.Value}|{AutoPriceConfig.OnNewProduct.Value}|" +

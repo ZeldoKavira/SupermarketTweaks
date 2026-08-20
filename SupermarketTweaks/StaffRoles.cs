@@ -188,6 +188,12 @@ namespace SupermarketTweaks
             var names = StaffRolesConfig.CashierList();
             if (names.Count == 0) { StaffRoles.Status = "no cashiers picked"; return; }
 
+            // The same container the spawner counts against for its own cap, so this is exactly
+            // "how many customers are in the shop".
+            int customersLeft = 0;
+            if (mgr.customersnpcParentOBJ != null)
+                customersLeft = mgr.customersnpcParentOBJ.transform.childCount;
+
             for (int i = 0; i < mgr.employeesArray.Length; i++)
             {
                 string name = StaffRoles.NameOf(mgr, i);
@@ -202,18 +208,23 @@ namespace SupermarketTweaks
                     StaffRoles.Forget(i);
                     StaffRoles.SetRole(mgr, i, StaffRoles.Cashier, "shop open");
                 }
-                else
+                else if (customersLeft == 0)
                 {
-                    // Closed: remember what they were first, so an odd assignment survives.
+                    // Closed AND empty. Waiting for the last customer matters: "closed" only means
+                    // the doors stopped admitting people, and anyone already inside still has to
+                    // queue and pay. Pulling the cashiers the moment the sign flips would strand
+                    // them - and a customer who cannot find a free checkout turns thief outright.
                     StaffRoles.Remember(i, role);
-                    StaffRoles.SetRole(mgr, i, StaffRoles.Restocker, "shop closed");
+                    StaffRoles.SetRole(mgr, i, StaffRoles.Restocker, "shop closed and empty");
                 }
             }
 
             _wasOpen = open;
             StaffRoles.Status = open
                 ? $"open - {names.Count} on tills"
-                : $"closed - {names.Count} restocking";
+                : customersLeft > 0
+                    ? $"closed - {names.Count} still on tills, {customersLeft} customer(s) inside"
+                    : $"closed and empty - {names.Count} restocking";
         }
 
         // Storage staff restock when there is nothing to put away.
@@ -260,13 +271,28 @@ namespace SupermarketTweaks
                     StaffRoles.Remember(i, StaffRoles.Storage);
                     StaffRoles.SetRole(mgr, i, StaffRoles.Restocker, "no boxes on the floor");
                 }
-                else if (anyBoxes && role == StaffRoles.Restocker && _boxesPresentSince > 0f
-                         && now - _boxesPresentSince >= delay
+                else if (anyBoxes && role == StaffRoles.Restocker
                          && StaffRoles.Recall(i, -1) == StaffRoles.Storage)
                 {
-                    // Only people this rule moved go back; a hand-assigned restocker stays put.
-                    StaffRoles.Forget(i);
+                    // Going BACK is not debounced, unlike leaving.
+                    //
+                    // Waiting here was the bug: boxes are often cleared inside the delay - by the
+                    // player, or by a storage worker who wasn't converted - which reset
+                    // _boxesPresentSince and meant the timer never elapsed, so nobody ever returned.
+                    // Idling is worth debouncing; a delivery arriving is a real event, and there is
+                    // no flapping risk in this direction.
+                    //
+                    // The memory is deliberately NOT cleared here. If the command doesn't land -
+                    // the employee slot briefly null, the role rejected - this retries next tick
+                    // instead of stranding them as a restocker forever, which is what forgetting
+                    // before confirming used to do.
                     StaffRoles.SetRole(mgr, i, StaffRoles.Storage, "boxes waiting");
+                }
+                else if (role == StaffRoles.Storage && StaffRoles.Recall(i, -1) == StaffRoles.Storage)
+                {
+                    // Observed back in the job we moved them out of, so the note has served its
+                    // purpose and can go.
+                    StaffRoles.Forget(i);
                 }
             }
         }

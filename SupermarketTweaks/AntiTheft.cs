@@ -87,6 +87,51 @@ namespace SupermarketTweaks
         }
 
         internal static void Clear() => _alarmed.Clear();
+
+        // ---- client side ----
+        //
+        // A client is told the alarm state by the host rather than working it out, and the flag
+        // expires on its own. Without that expiry a single dropped "off" would leave someone stuck
+        // at 1x for the rest of the session with no way to tell why.
+        private static bool _remoteAlarm;
+        private static float _remoteAlarmUntil;
+        private const float RemoteAlarmTimeout = 90f;
+
+        internal static void SetRemoteAlarm(bool active)
+        {
+            _remoteAlarm = active;
+            _remoteAlarmUntil = active ? Time.unscaledTime + RemoteAlarmTimeout : 0f;
+
+            if (AntiTheftConfig.Log.Value)
+                Plugin.Log.LogInfo($"[Theft] Host says alarm {(active ? "ON" : "off")}.");
+        }
+
+        internal static bool RemoteAlarmActive
+        {
+            get
+            {
+                if (!_remoteAlarm) return false;
+                if (Time.unscaledTime > _remoteAlarmUntil)
+                {
+                    _remoteAlarm = false;
+                    Plugin.Log.LogWarning("[Theft] Alarm state expired without an all-clear; " +
+                                          "releasing the speed hold.");
+                    return false;
+                }
+                return true;
+            }
+        }
+
+        // The authority differs by side, so ask the right one.
+        internal static bool AnyAlarm
+        {
+            get
+            {
+                bool isClient = NetworkClient.active && !NetworkServer.active;
+                if (isClient) { Status = RemoteAlarmActive ? "ALARM (host)" : "quiet"; return RemoteAlarmActive; }
+                return AlarmActive;
+            }
+        }
     }
 
     // The door decides a thief is fair game here, and sounds the alarm in the same breath.
