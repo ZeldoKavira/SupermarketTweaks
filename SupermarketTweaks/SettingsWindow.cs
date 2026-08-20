@@ -68,9 +68,16 @@ namespace SupermarketTweaks
 
             // Manual sweeps stay available to a client on purpose - CmdUpdateProductPrice accepts
             // them, and it is useful to be able to force one without asking the host.
+            GUILayout.Label($"   sales: {AutoSales.Status}", Rich());
+
+            GUILayout.BeginHorizontal();
             if (GUILayout.Button("Reprice everything now", GUILayout.Width(220f))
                 && AutoPriceDriver.Instance != null)
                 AutoPriceDriver.Instance.SweepNow("manual");
+            if (GUILayout.Button("Restore sales now", GUILayout.Width(180f))
+                && AutoSalesDriver.Instance != null)
+                AutoSalesDriver.Instance.RestoreNow();
+            GUILayout.EndHorizontal();
 
             foreach (var section in cfg.Keys.Select(k => k.Section).Distinct().OrderBy(s => s))
             {

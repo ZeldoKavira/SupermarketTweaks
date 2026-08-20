@@ -19,6 +19,10 @@ BepInEx 5 mod for **Supermarket Together**.
   lands. Roles are `NPC_Info.taskPriority` (1 cashier, 2 restocker, 3 storage, 4 security,
   5 technician, 6 ordering, 7 manufacturing), changed through the game's own
   `CmdChangeEmployeePriority`.
+- **Sales restart each morning** — `RpcEndDay` calls `DailySaleReset()`, which clears
+  `productsIDOnSale` and `productsSaleDiscount` outright, so every day begins with no sales
+  running. This remembers what was on and puts it back. An empty sale slot is a wasted roll in
+  `ExtraProductsOnSaleToAdd` — the only mechanism that *adds* items to a shopping list.
 - **In-game config** — F1. F5 toggles the speed boost.
 
 ## Multiplayer

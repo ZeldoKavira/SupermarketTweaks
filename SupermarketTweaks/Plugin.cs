@@ -29,6 +29,7 @@ namespace SupermarketTweaks
 
             AutoPriceConfig.Init(Config);
             GameSpeedConfig.Init(Config);
+            AutoSalesConfig.Init(Config);
             StaffRolesConfig.Init(Config);
             NetSyncConfig.Init(Config);
             SettingsWindow.Init(Config);
@@ -39,6 +40,7 @@ namespace SupermarketTweaks
             go.transform.SetParent(transform);
             go.AddComponent<AutoPriceDriver>();
             go.AddComponent<GameSpeedDriver>();
+            go.AddComponent<AutoSalesDriver>();
             go.AddComponent<StaffRolesDriver>();
             go.AddComponent<NetSyncDriver>();
             go.AddComponent<SettingsWindow>();
