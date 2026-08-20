@@ -30,8 +30,8 @@ namespace SupermarketTweaks
     // Neither side can safely send blind: whoever lacks the mod is the one that gets disconnected,
     // and we cannot protect a vanilla player from our own packet. The client therefore opens, so
     // that a mod-vs-vanilla mismatch costs the modded player their own connection rather than
-    // kicking an innocent one. Both players are expected to have the mod; SyncSettings turns it off
-    // for joining a vanilla host.
+    // kicking an innocent one. Both players are expected to have the mod - joining a host without
+    // it will disconnect you.
     public struct SmtMessage : NetworkMessage
     {
         public string Kind;
@@ -40,20 +40,25 @@ namespace SupermarketTweaks
 
     public static class NetSyncConfig
     {
-        internal static ConfigEntry<bool> SyncSettings;
         internal static ConfigEntry<bool> Tolerant;
 
         public static void Init(ConfigFile cfg)
         {
-            SyncSettings = cfg.Bind("Multiplayer", "SyncSettings", true,
-                "Share pricing settings between host and clients. Both players need the mod - turn " +
-                "this OFF before joining a host who doesn't have it, or you will be disconnected.");
             Tolerant = cfg.Bind("Multiplayer", "TolerateUnknownPackets", true,
                 "Stop Mirror disconnecting us over a message we don't recognise. Without this, an " +
                 "older client drops out the moment a newer host sends something it has never seen.");
         }
 
-        internal static bool On => SyncSettings != null && SyncSettings.Value;
+        // Deliberately NOT a setting.
+        //
+        // It was one, and that was a mistake: host-side pricing, staff roles and the alarm hold all
+        // depend on this channel, so switching it off does not disable a feature - it silently
+        // breaks several, with no error on either side. A requirement dressed up as a preference is
+        // just a way to configure the mod into being broken.
+        //
+        // The one case it used to guard - a modded client joining a host WITHOUT the mod, which
+        // disconnects the client - is documented instead. Both players are expected to have the mod.
+        internal static bool On => true;
     }
 
     internal static class NetSync
@@ -76,8 +81,6 @@ namespace SupermarketTweaks
         // Clients that have answered, so the host never sends to someone who might be vanilla.
         private static readonly HashSet<int> _moddedClients = new HashSet<int>();
 
-        // Warn once per connection rather than once per retry, which is every five seconds.
-        private static readonly HashSet<int> _warnedOff = new HashSet<int>();
 
         internal static void Tick()
         {
@@ -85,21 +88,12 @@ namespace SupermarketTweaks
             {
                 if (NetSyncConfig.Tolerant != null && NetSyncConfig.Tolerant.Value) MakeTolerant();
 
-                // Handlers are registered even when syncing is OFF, and that ordering matters.
-                //
-                // Bailing out before this made a misconfiguration undiagnosable: a host with
-                // SyncSettings off has no handler, so a client's hellos land on an id nobody
-                // listens for and vanish. The client retries forever, the host sees nothing at all,
-                // and both logs look healthy. Listening costs one dictionary entry, and lets the
-                // host say plainly that someone is trying to reach it.
+                // Registered before anything else can return early. This used to sit behind a
+                // config check, and a host with that check off had no handler at all - so a
+                // client's hellos landed on an id nobody listened for and vanished, with both logs
+                // looking healthy. Nothing may come between being active and being able to listen.
                 if (NetworkServer.active) EnsureServerHandlers();
                 if (NetworkClient.active) EnsureClientHandlers();
-
-                if (!NetSyncConfig.On)
-                {
-                    Status = "off (SyncSettings is disabled)";
-                    return;
-                }
 
                 if (NetworkServer.active)
                 {
@@ -146,8 +140,7 @@ namespace SupermarketTweaks
                     _helloCount = 0;
                     _nextHello = 0f;
                     _moddedClients.Clear();
-                    _warnedOff.Clear();
-                    if (!Status.StartsWith("off")) Status = "not connected";
+                    Status = "not connected";
                 }
             }
             catch (Exception e) { Plugin.Log.LogError($"[NetSync] {e.Message}"); }
@@ -206,18 +199,6 @@ namespace SupermarketTweaks
                 switch (msg.Kind)
                 {
                     case Hello:
-                        if (!NetSyncConfig.On)
-                        {
-                            // Heard, but syncing is switched off here. Worth one loud line: from
-                            // the client's side this is indistinguishable from the host not having
-                            // the mod at all.
-                            if (_warnedOff.Add(conn.connectionId))
-                                Plugin.Log.LogWarning($"[NetSync] Client {conn.connectionId} has the " +
-                                    "mod and is asking to sync, but Multiplayer/SyncSettings is OFF " +
-                                    "on this host, so nothing will be shared. Turn it on in F1.");
-                            return;
-                        }
-
                         // Now proven to have the mod, so it is safe to send to them.
                         _moddedClients.Add(conn.connectionId);
                         Plugin.Log.LogInfo($"[NetSync] Client {conn.connectionId} has the mod (v{msg.Payload}).");

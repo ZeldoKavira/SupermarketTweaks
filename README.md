@@ -63,8 +63,12 @@ own side as a second layer.
 
 **Both players need the mod.** We can't protect a vanilla player from our packets, so the client
 speaks first: a mod-vs-vanilla mismatch costs the modded player their own connection instead of
-kicking someone innocent. The host only ever sends to clients that have said hello. Turn
-`SyncSettings` off before joining a host without the mod.
+kicking someone innocent. The host only ever sends to clients that have said hello.
+
+There is deliberately **no setting to disable syncing**. Host-side pricing, staff roles and the
+alarm hold all depend on this channel, so turning it off wouldn't disable a feature — it would
+silently break several, with no error on either side. If you want to join a host without the mod,
+remove the plugin for that session.
 
 ## Installing
 
