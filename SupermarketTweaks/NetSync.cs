@@ -76,16 +76,30 @@ namespace SupermarketTweaks
         // Clients that have answered, so the host never sends to someone who might be vanilla.
         private static readonly HashSet<int> _moddedClients = new HashSet<int>();
 
+        // Warn once per connection rather than once per retry, which is every five seconds.
+        private static readonly HashSet<int> _warnedOff = new HashSet<int>();
+
         internal static void Tick()
         {
             try
             {
                 if (NetSyncConfig.Tolerant != null && NetSyncConfig.Tolerant.Value) MakeTolerant();
 
-                if (!NetSyncConfig.On) { Status = "off"; return; }
-
+                // Handlers are registered even when syncing is OFF, and that ordering matters.
+                //
+                // Bailing out before this made a misconfiguration undiagnosable: a host with
+                // SyncSettings off has no handler, so a client's hellos land on an id nobody
+                // listens for and vanish. The client retries forever, the host sees nothing at all,
+                // and both logs look healthy. Listening costs one dictionary entry, and lets the
+                // host say plainly that someone is trying to reach it.
                 if (NetworkServer.active) EnsureServerHandlers();
                 if (NetworkClient.active) EnsureClientHandlers();
+
+                if (!NetSyncConfig.On)
+                {
+                    Status = "off (SyncSettings is disabled)";
+                    return;
+                }
 
                 if (NetworkServer.active)
                 {
@@ -132,7 +146,8 @@ namespace SupermarketTweaks
                     _helloCount = 0;
                     _nextHello = 0f;
                     _moddedClients.Clear();
-                    if (Status != "off") Status = "not connected";
+                    _warnedOff.Clear();
+                    if (!Status.StartsWith("off")) Status = "not connected";
                 }
             }
             catch (Exception e) { Plugin.Log.LogError($"[NetSync] {e.Message}"); }
@@ -191,6 +206,18 @@ namespace SupermarketTweaks
                 switch (msg.Kind)
                 {
                     case Hello:
+                        if (!NetSyncConfig.On)
+                        {
+                            // Heard, but syncing is switched off here. Worth one loud line: from
+                            // the client's side this is indistinguishable from the host not having
+                            // the mod at all.
+                            if (_warnedOff.Add(conn.connectionId))
+                                Plugin.Log.LogWarning($"[NetSync] Client {conn.connectionId} has the " +
+                                    "mod and is asking to sync, but Multiplayer/SyncSettings is OFF " +
+                                    "on this host, so nothing will be shared. Turn it on in F1.");
+                            return;
+                        }
+
                         // Now proven to have the mod, so it is safe to send to them.
                         _moddedClients.Add(conn.connectionId);
                         Plugin.Log.LogInfo($"[NetSync] Client {conn.connectionId} has the mod (v{msg.Payload}).");
