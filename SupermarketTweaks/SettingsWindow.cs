@@ -80,8 +80,12 @@ namespace SupermarketTweaks
                 foreach (var key in cfg.Keys.Where(k => k.Section == section).OrderBy(k => k.Key))
                 {
                     var entry = cfg[key];
-                    if (entry != null) DrawEntry(entry, key);
+                    // CashierNames is a comma-separated list of names, which is no way to pick
+                    // people. The roster below replaces it.
+                    if (entry != null && key.Key != "CashierNames") DrawEntry(entry, key);
                 }
+
+                if (section == "Staff") DrawStaffPicker();
             }
 
             GUILayout.Space(8f);
@@ -160,6 +164,49 @@ namespace SupermarketTweaks
                     entry.BoxedValue = isInt ? (object)(int)parsed : parsed;
                 }
             }
+        }
+
+        // Who works the tills. Listed by the game's own NPCName so it matches the employee menu.
+        private void DrawStaffPicker()
+        {
+            var mgr = NPC_Manager.Instance;
+            if (mgr == null || mgr.employeesArray == null)
+            {
+                GUILayout.Label("   (load a save to pick staff)");
+                return;
+            }
+
+            var cashiers = StaffRolesConfig.CashierList();
+            int shown = 0;
+
+            GUILayout.Space(4f);
+            GUILayout.Label($"   <b>Your staff</b>   {StaffRoles.Status}", Rich());
+
+            for (int i = 0; i < mgr.employeesArray.Length; i++)
+            {
+                string name = StaffRoles.NameOf(mgr, i);
+                if (string.IsNullOrEmpty(name)) continue;
+                shown++;
+
+                int role = StaffRoles.RoleOf(mgr, i);
+                bool isCashier = cashiers.Contains(name);
+
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"   {name}", GUILayout.Width(200f));
+                GUILayout.Label(StaffRoles.RoleName(role), GUILayout.Width(110f));
+
+                bool now = GUILayout.Toggle(isCashier, isCashier ? " day cashier" : " not a cashier");
+                if (now != isCashier)
+                {
+                    if (now) cashiers.Add(name); else cashiers.Remove(name);
+                    StaffRolesConfig.SetCashiers(cashiers);
+                }
+                GUILayout.EndHorizontal();
+            }
+
+            if (shown == 0) GUILayout.Label("   No staff hired yet.");
+            else GUILayout.Label("   Day cashiers work the tills while open and restock while shut. " +
+                                 "Storage staff restock whenever the floor is clear of boxes.", Rich());
         }
 
         private static string Id(ConfigDefinition key) => key.Section + "/" + key.Key;

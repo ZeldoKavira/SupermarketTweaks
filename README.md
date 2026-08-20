@@ -13,6 +13,12 @@ BepInEx 5 mod for **Supermarket Together**.
   of every day, in `RpcEndDay` and `CmdEndDayFromButton`. This puts it back. It also scales the
   physics timestep the way the game's own speed control does, so 3x speed doesn't mean 3x the
   physics work per second.
+- **Automatic staff roles** — pick your cashiers in the F1 panel. They work the tills while the
+  shop is open and switch to restocking while it's shut, then back at opening. Separately, storage
+  staff switch to restocking whenever no boxes are on the floor, and back the moment a delivery
+  lands. Roles are `NPC_Info.taskPriority` (1 cashier, 2 restocker, 3 storage, 4 security,
+  5 technician, 6 ordering, 7 manufacturing), changed through the game's own
+  `CmdChangeEmployeePriority`.
 - **In-game config** — F1. F5 toggles the speed boost.
 
 ## Multiplayer
