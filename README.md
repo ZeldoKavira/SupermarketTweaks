@@ -17,9 +17,33 @@ BepInEx 5 mod for **Supermarket Together**.
 
 ## Multiplayer
 
-Pricing works from either side (`CmdUpdateProductPrice` has `requiresAuthority: false`).
-Game speed is **host-only** in effect: `Time.timeScale` is local, and the host runs the
-simulation. Running the speed boost as a client just desyncs your own view.
+**Automatic pricing runs on the host only.** A client *can* price - `CmdUpdateProductPrice` has
+`requiresAuthority: false` - which is the problem: two machines sweeping the same products on the
+same triggers would send duplicate commands and fight whenever their settings differed. The host
+owns it, and clients get the host's settings pushed to them so their panel reads true and the
+manual "Reprice now" button uses the same numbers.
+
+**Game speed is local**, and only meaningful on the host, which runs the simulation. Running the
+speed boost as a client just desyncs your own view.
+
+### Settings sync
+
+One Mirror message type, ever (`SmtMessage`), carrying a `Kind` string prefixed `SMT/`. New
+features become new `Kind` values inside the same envelope rather than new message types - because
+an unregistered message id is fatal in this Mirror build:
+
+    Unknown message id: {messageId} for connection: {connection}...
+    -> UnpackAndInvoke returns false -> connection.Disconnect()   (exceptionsDisconnect = true)
+
+So a second message type would disconnect every older client the first time a newer host used it.
+With one envelope the id never changes and an out-of-date client silently ignores kinds and
+setting keys it doesn't know. `TolerateUnknownPackets` also clears `exceptionsDisconnect` on our
+own side as a second layer.
+
+**Both players need the mod.** We can't protect a vanilla player from our packets, so the client
+speaks first: a mod-vs-vanilla mismatch costs the modded player their own connection instead of
+kicking someone innocent. The host only ever sends to clients that have said hello. Turn
+`SyncSettings` off before joining a host without the mod.
 
 ## Installing
 

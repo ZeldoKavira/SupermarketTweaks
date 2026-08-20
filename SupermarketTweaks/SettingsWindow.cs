@@ -61,7 +61,13 @@ namespace SupermarketTweaks
 
             // Live status first - the two features are both "did it actually fire" questions.
             GUILayout.Label($"<b>Status</b>   speed: {GameSpeedDriver.Status}   |   pricing: {AutoPrice.LastResult}", Rich());
+            GUILayout.Label($"   sync: {NetSync.Status}" +
+                            (AutoPriceConfig.IsAuthority
+                                ? "   |   <b>this machine prices automatically</b>"
+                                : "   |   the host prices automatically; these settings come from them"), Rich());
 
+            // Manual sweeps stay available to a client on purpose - CmdUpdateProductPrice accepts
+            // them, and it is useful to be able to force one without asking the host.
             if (GUILayout.Button("Reprice everything now", GUILayout.Width(220f))
                 && AutoPriceDriver.Instance != null)
                 AutoPriceDriver.Instance.SweepNow("manual");

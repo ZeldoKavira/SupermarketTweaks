@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using BepInEx.Configuration;
 using HarmonyLib;
+using Mirror;
 using UnityEngine;
 
 namespace SupermarketTweaks
@@ -61,6 +62,18 @@ namespace SupermarketTweaks
         }
 
         internal static bool On => Enabled != null && Enabled.Value;
+
+        // Automatic sweeps run on the host only.
+        //
+        // CmdUpdateProductPrice has requiresAuthority: false, so a client CAN price - which is
+        // exactly the problem. Two machines sweeping the same product list on the same triggers
+        // send two commands per product, and if their settings differ at all they fight, each
+        // overwriting the other on every new day. One authority removes the whole class of bug,
+        // and the host is the natural one: it owns the day rollover that drives repricing.
+        //
+        // NetworkServer.active covers host and singleplayer alike; a pure client is the only case
+        // this excludes, and NetSync gives it the host's settings so its panel still reads true.
+        internal static bool IsAuthority => !NetworkClient.active || NetworkServer.active;
     }
 
     internal static class AutoPrice
@@ -136,6 +149,15 @@ namespace SupermarketTweaks
             {
                 if (!AutoPriceConfig.On) return;
 
+                // Clients watch the day roll over too, but the host does the repricing.
+                if (!AutoPriceConfig.IsAuthority)
+                {
+                    var d = GameData.Instance;
+                    if (d != null) _lastDay = d.gameDay;      // stay in step, do nothing
+                    _pending.Clear();
+                    return;
+                }
+
                 var data = GameData.Instance;
                 if (data == null || ProductListing.Instance == null) return;
 
@@ -194,6 +216,7 @@ namespace SupermarketTweaks
             try
             {
                 if (!AutoPriceConfig.On || !AutoPriceConfig.OnNewProduct.Value) return;
+                if (!AutoPriceConfig.IsAuthority) return;
                 if (AutoPriceDriver.Instance == null || __instance.availableProducts == null) return;
 
                 var fresh = new List<int>();
