@@ -1,5 +1,6 @@
 using System;
 using BepInEx.Configuration;
+using Mirror;
 using UnityEngine;
 
 namespace SupermarketTweaks
@@ -81,8 +82,18 @@ namespace SupermarketTweaks
             {
                 if (GameSpeedConfig.ToggleKey != null && GameSpeedConfig.ToggleKey.Value.IsDown())
                 {
-                    GameSpeedConfig.Enabled.Value = !GameSpeedConfig.Enabled.Value;
-                    Apply(force: true);
+                    // On a client the host owns the clock: it drives the shared simulation, and it
+                    // rebroadcasts on every change, so a local toggle would be silently undone the
+                    // next time the host touched anything. Refusing outright is at least honest.
+                    if (NetworkClient.active && !NetworkServer.active && NetSyncConfig.On)
+                    {
+                        Plugin.Log.LogInfo("[GameSpeed] The host sets the speed; ask them to change it.");
+                    }
+                    else
+                    {
+                        GameSpeedConfig.Enabled.Value = !GameSpeedConfig.Enabled.Value;
+                        Apply(force: true);
+                    }
                 }
 
                 if (Time.unscaledTime < _next) return;

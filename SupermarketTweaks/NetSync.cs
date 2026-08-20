@@ -200,6 +200,14 @@ namespace SupermarketTweaks
                 "newday="  + (AutoPriceConfig.OnNewDay.Value ? 1 : 0),
                 "newprod=" + (AutoPriceConfig.OnNewProduct.Value ? 1 : 0),
                 "enabled=" + (AutoPriceConfig.Enabled.Value ? 1 : 0),
+
+                // Speed has to travel too. timeScale is local, but the HOST's copy drives the
+                // shared simulation while a client's drives only its own view - so a host at 3x
+                // and a client at 1x means the world moves at triple speed around a player whose
+                // own character does not. Matching clocks is the only coherent state.
+                "speedon=" + (GameSpeedConfig.Enabled.Value ? 1 : 0),
+                "speed="   + GameSpeedConfig.Speed.Value.ToString("0.###",
+                                 System.Globalization.CultureInfo.InvariantCulture),
             });
         }
 
@@ -221,6 +229,14 @@ namespace SupermarketTweaks
                     case "newday":  AutoPriceConfig.OnNewDay.Value     = kv[1] == "1"; break;
                     case "newprod": AutoPriceConfig.OnNewProduct.Value = kv[1] == "1"; break;
                     case "enabled": AutoPriceConfig.Enabled.Value      = kv[1] == "1"; break;
+                    case "speedon": GameSpeedConfig.Enabled.Value      = kv[1] == "1"; break;
+                    case "speed":
+                        // InvariantCulture both ways: a host on a comma-decimal locale would
+                        // otherwise send "3,5" and every other client would fail to parse it.
+                        if (float.TryParse(kv[1], System.Globalization.NumberStyles.Float,
+                                           System.Globalization.CultureInfo.InvariantCulture, out var sp))
+                            GameSpeedConfig.Speed.Value = Mathf.Clamp(sp, 0.25f, 10f);
+                        break;
                 }
             }
 
@@ -298,7 +314,8 @@ namespace SupermarketTweaks
 
                 string now = $"{AutoPriceConfig.Percent.Value}|{AutoPriceConfig.RoundDown.Value}|" +
                              $"{AutoPriceConfig.OnNewDay.Value}|{AutoPriceConfig.OnNewProduct.Value}|" +
-                             $"{AutoPriceConfig.Enabled.Value}";
+                             $"{AutoPriceConfig.Enabled.Value}|" +
+                             $"{GameSpeedConfig.Enabled.Value}|{GameSpeedConfig.Speed.Value}";
                 if (_lastSent == null) { _lastSent = now; return; }
                 if (now == _lastSent) return;
 

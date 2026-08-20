@@ -38,8 +38,10 @@ same triggers would send duplicate commands and fight whenever their settings di
 owns it, and clients get the host's settings pushed to them so their panel reads true and the
 manual "Reprice now" button uses the same numbers.
 
-**Game speed is local**, and only meaningful on the host, which runs the simulation. Running the
-speed boost as a client just desyncs your own view.
+**Game speed is synced from the host.** `timeScale` is a local value, but the host's copy drives
+the shared simulation while a client's drives only its own view — a host at 3x with a client at 1x
+means the world moves at triple speed around a player whose own character does not. So the host
+owns the clock and clients follow it; F5 on a client tells you to ask the host.
 
 ### Settings sync
 
