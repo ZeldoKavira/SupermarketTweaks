@@ -28,6 +28,10 @@ BepInEx 5 mod for **Supermarket Together**.
   that survive fast-forward: drops scale with the game speed multiplier, and the anti-theft door
   alarm drops you to 1x until the thief is empty-handed or gone. Fast-forward is the one thing that
   makes theft unmanageable, because you get proportionally less real time to react.
+- **Shelfless boxes are left alone** — storage staff ignore boxes whose product has no shelf row
+  assigned. `MainRestockUpdate` only builds tasks from rows that already name a product
+  (`if (num2 < 0) continue;`), so such a box can never be restocked; storing it just clogs the back
+  room. Left on the floor it also shows you which product still needs a shelf.
 - **In-game config** — F1. F5 toggles the speed boost.
 
 ## Multiplayer
