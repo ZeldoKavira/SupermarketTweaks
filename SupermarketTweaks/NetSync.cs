@@ -312,6 +312,13 @@ namespace SupermarketTweaks
                 "speedon=" + (GameSpeedConfig.Enabled.Value ? 1 : 0),
                 "speed="   + GameSpeedConfig.Speed.Value.ToString("0.###",
                                  System.Globalization.CultureInfo.InvariantCulture),
+
+                // The super tier travels as its own pair rather than folded into "speed", so a
+                // client's panel shows the same state the host is in - and so an older client that
+                // has never heard of super still tracks the normal speed instead of nothing.
+                "super="      + (GameSpeedConfig.SuperActive.Value ? 1 : 0),
+                "superspeed=" + GameSpeedConfig.SuperSpeed.Value.ToString("0.###",
+                                    System.Globalization.CultureInfo.InvariantCulture),
             });
         }
 
@@ -340,6 +347,12 @@ namespace SupermarketTweaks
                         if (float.TryParse(kv[1], System.Globalization.NumberStyles.Float,
                                            System.Globalization.CultureInfo.InvariantCulture, out var sp))
                             GameSpeedConfig.Speed.Value = Mathf.Clamp(sp, 0.25f, 10f);
+                        break;
+                    case "super": GameSpeedConfig.SuperActive.Value = kv[1] == "1"; break;
+                    case "superspeed":
+                        if (float.TryParse(kv[1], System.Globalization.NumberStyles.Float,
+                                           System.Globalization.CultureInfo.InvariantCulture, out var ss))
+                            GameSpeedConfig.SuperSpeed.Value = Mathf.Clamp(ss, 1f, 20f);
                         break;
                 }
             }
@@ -419,7 +432,8 @@ namespace SupermarketTweaks
                 string now = $"{AutoPriceConfig.Percent.Value}|{AutoPriceConfig.RoundDown.Value}|" +
                              $"{AutoPriceConfig.OnNewDay.Value}|{AutoPriceConfig.OnNewProduct.Value}|" +
                              $"{AutoPriceConfig.Enabled.Value}|" +
-                             $"{GameSpeedConfig.Enabled.Value}|{GameSpeedConfig.Speed.Value}";
+                             $"{GameSpeedConfig.Enabled.Value}|{GameSpeedConfig.Speed.Value}|" +
+                             $"{GameSpeedConfig.SuperActive.Value}|{GameSpeedConfig.SuperSpeed.Value}";
                 if (_lastSent == null) { _lastSent = now; return; }
                 if (now == _lastSent) return;
 

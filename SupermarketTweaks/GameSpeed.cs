@@ -32,6 +32,9 @@ namespace SupermarketTweaks
         internal static ConfigEntry<bool> ReapplyOnNewDay;
         internal static ConfigEntry<bool> ScaleFixedTimestep;
         internal static ConfigEntry<KeyboardShortcut> ToggleKey;
+        internal static ConfigEntry<bool> SuperActive;
+        internal static ConfigEntry<float> SuperSpeed;
+        internal static ConfigEntry<KeyboardShortcut> SuperKey;
 
         public static void Init(ConfigFile cfg)
         {
@@ -48,13 +51,35 @@ namespace SupermarketTweaks
                 "Without this, running at 3x does 3x the physics work per second and will cost you " +
                 "frames in a busy shop.");
             ToggleKey = cfg.Bind("Speed", "ToggleKey", new KeyboardShortcut(KeyCode.F5),
-                "Turns the speed boost on and off.");
+                "Turns the normal speed boost on and off.");
+            SuperActive = cfg.Bind("Speed", "SuperSpeedActive", false,
+                "Whether super speed is currently on. Toggled with the super speed key; kept here " +
+                "so the F1 panel shows it and it survives a reload.");
+            SuperSpeed = cfg.Bind("Speed", "SuperSpeed", 10f,
+                new ConfigDescription("The second, faster tier. Overrides the normal speed while " +
+                    "active. High values cost frames and make theft very hard to react to.",
+                    new AcceptableValueRange<float>(1f, 20f)));
+            SuperKey = cfg.Bind("Speed", "SuperSpeedKey", new KeyboardShortcut(KeyCode.F6),
+                "Toggles super speed. Turning it off returns to whatever the normal boost was, " +
+                "rather than to 1x.");
         }
 
         internal static bool On => Enabled != null && Enabled.Value;
+        internal static bool Super => SuperActive != null && SuperActive.Value;
 
         // What the player asked for, ignoring any temporary override.
-        internal static float Target => On ? Mathf.Clamp(Speed.Value, 0.25f, 10f) : 1f;
+        //
+        // Super wins over the normal boost rather than multiplying with it, so the two keys are
+        // independent: F6 off always lands back on whatever F5 was set to, without having to
+        // remember which order they were pressed in.
+        internal static float Target
+        {
+            get
+            {
+                if (Super) return Mathf.Clamp(SuperSpeed.Value, 1f, 20f);
+                return On ? Mathf.Clamp(Speed.Value, 0.25f, 10f) : 1f;
+            }
+        }
 
         // What we actually apply. The anti-theft alarm forces normal speed so a robbery can be
         // dealt with at a human pace - it is the one event where fast-forward actively costs you
@@ -80,6 +105,19 @@ namespace SupermarketTweaks
         {
             try
             {
+                if (GameSpeedConfig.SuperKey != null && GameSpeedConfig.SuperKey.Value.IsDown())
+                {
+                    if (NetworkClient.active && !NetworkServer.active)
+                    {
+                        Plugin.Log.LogInfo("[GameSpeed] The host sets the speed; ask them to change it.");
+                    }
+                    else
+                    {
+                        GameSpeedConfig.SuperActive.Value = !GameSpeedConfig.SuperActive.Value;
+                        Apply(force: true);
+                    }
+                }
+
                 if (GameSpeedConfig.ToggleKey != null && GameSpeedConfig.ToggleKey.Value.IsDown())
                 {
                     // On a client the host owns the clock: it drives the shared simulation, and it
@@ -146,9 +184,11 @@ namespace SupermarketTweaks
             bool held = AntiTheftConfig.SlowOn && AntiTheft.AnyAlarm;
             Status = held
                 ? $"1x - held by alarm (want {GameSpeedConfig.Target:0.##}x)"
-                : GameSpeedConfig.On
-                    ? $"{target:0.##}x (timestep {Time.fixedDeltaTime:0.###})"
-                    : "off";
+                : GameSpeedConfig.Super
+                    ? $"SUPER {target:0.##}x (timestep {Time.fixedDeltaTime:0.###})"
+                    : GameSpeedConfig.On
+                        ? $"{target:0.##}x (timestep {Time.fixedDeltaTime:0.###})"
+                        : "off";
         }
 
         private void OnDestroy()
