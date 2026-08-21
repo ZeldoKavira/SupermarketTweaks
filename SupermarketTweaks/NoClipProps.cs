@@ -23,6 +23,7 @@ namespace SupermarketTweaks
         internal static ConfigEntry<bool> IncludeTriggers;
         internal static ConfigEntry<KeyboardShortcut> ListKey;
         internal static ConfigEntry<float> ListRadius;
+        internal static ConfigEntry<string> ListIgnore;
 
         public static void Init(ConfigFile cfg)
         {
@@ -38,6 +39,11 @@ namespace SupermarketTweaks
             ListKey = cfg.Bind("World", "ListPropsKey", new KeyboardShortcut(KeyCode.F11),
                 "Log every collider near you, closest first. Stand against whatever is blocking " +
                 "you and press this to find out what it is actually called.");
+            ListIgnore = cfg.Bind("World", "ListIgnoreNames",
+                "PaintableModule,PaintablesParent,UModeler,Umodeler,BasePlane,Demo_Beams,Beam ,LOD0",
+                "Substrings to leave out of the F11 listing, comma separated. The room itself is " +
+                "made of hundreds of wall, floor and ceiling panels that are never what you are " +
+                "looking for, and they crowd out the thing that is. Clear it to see everything.");
             ListRadius = cfg.Bind("World", "ListRadiusMetres", 5f,
                 new ConfigDescription("How far around you to look when listing colliders.",
                     new AcceptableValueRange<float>(1f, 30f)));
@@ -173,7 +179,21 @@ namespace SupermarketTweaks
             float radius = NoClipPropsConfig.ListRadius != null
                 ? Mathf.Clamp(NoClipPropsConfig.ListRadius.Value, 1f, 30f) : 5f;
 
+            // The room's own fabric - paintable wall/floor/ceiling modules, UModeler meshes,
+            // structural beams - is never the answer and there are hundreds of them. Listing it
+            // buried the one line that mattered: an Expansions/Addons entry sat at 0.00m while
+            // forty PaintableModules filled the rest of the page.
+            var ignore = new List<string>();
+            var rawIgnore = NoClipPropsConfig.ListIgnore != null ? NoClipPropsConfig.ListIgnore.Value : null;
+            if (!string.IsNullOrEmpty(rawIgnore))
+                foreach (var part in rawIgnore.Split(','))
+                {
+                    var t = part.Trim();
+                    if (t.Length > 0) ignore.Add(t);
+                }
+
             var hits = new List<KeyValuePair<float, string>>();
+            int hidden = 0;
 
             // OverlapSphere rather than FindObjectsOfType: it asks physics directly, so it returns
             // exactly the things that could be blocking you, and nothing from the rest of the map.
@@ -188,6 +208,15 @@ namespace SupermarketTweaks
                 int depth = 0;
                 while (t != null && depth++ < 5) { path = t.name + "/" + path; t = t.parent; }
 
+                bool skip = false;
+                foreach (var word in ignore)
+                {
+                    if (path.IndexOf(word, System.StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    skip = true;
+                    break;
+                }
+                if (skip) { hidden++; continue; }
+
                 hits.Add(new KeyValuePair<float, string>(d,
                     $"{d,5:0.00}m  {path}   [{col.GetType().Name}" +
                     $"{(col.isTrigger ? ", trigger" : "")}" +
@@ -197,8 +226,9 @@ namespace SupermarketTweaks
             hits.Sort((a, b) => a.Key.CompareTo(b.Key));
 
             Plugin.Log.LogInfo($"[NoClip] {hits.Count} collider(s) within {radius:0.#}m " +
-                               "(closest first) - the blocker is usually near the top:");
-            for (int i = 0; i < hits.Count && i < 40; i++)
+                               (hidden > 0 ? $" ({hidden} room panel(s) hidden by ListIgnoreNames)" : "") +
+                               " (closest first) - the blocker is usually near the top:");
+            for (int i = 0; i < hits.Count && i < 60; i++)
                 Plugin.Log.LogInfo("    " + hits[i].Value);
 
             if (hits.Count == 0)
