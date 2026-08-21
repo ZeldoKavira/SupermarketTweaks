@@ -79,6 +79,22 @@ namespace SupermarketTweaks
                 roots++;
             }
 
+            // The manufacturing machine's interface is a canvas of its own, nowhere near
+            // Canvas_Manager, so neither root above reaches it. Walked from selectionCanvasOBJ
+            // rather than the machine transform: the machine carries its meshes and colliders too,
+            // and it is the UI we are here to read.
+            foreach (var machine in UnityEngine.Object.FindObjectsOfType<ManufacturingProduction>(true))
+            {
+                var canvas = machine.selectionCanvasOBJ;
+                if (canvas == null) continue;
+
+                sb.AppendLine($"=== ManufacturingProduction '{machine.gameObject.name}' " +
+                              $"selectionCanvas (active={canvas.activeInHierarchy}) ===");
+                Walk(canvas.transform, 0, sb);
+                sb.AppendLine();
+                roots++;
+            }
+
             if (roots == 0)
             {
                 Plugin.Log.LogWarning("[UIDump] Found no ordering UI. Open the ordering terminal first.");
