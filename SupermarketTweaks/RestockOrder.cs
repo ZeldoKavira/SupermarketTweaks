@@ -14,16 +14,17 @@ namespace SupermarketTweaks
     //
     // How many boxes
     // --------------
-    //   target    = max(totalShelfCapacityForThatProduct, MinimumStock)
+    //   target    = max(totalShelfCapacityForThatProduct + 1, MinimumStock)
     //   shortfall = target - everythingTheShopAlreadyOwns
-    //   boxes     = floor(shortfall / maxItemsPerBox) + 1
+    //   boxes     = ceil(shortfall / maxItemsPerBox)
     //
-    // The target is whichever is larger of "enough to fill the shelves" and the configured minimum,
-    // because the minimum is a floor on the total rather than a bonus on top - a product with 300
-    // slots of shelf is already past a minimum of 50 and does not need padding.
+    // The target is whichever is larger of "fill the shelves and keep a spare" and the configured
+    // minimum, because the minimum is a floor on the total rather than a bonus on top - a product
+    // with 300 slots of shelf is already past a minimum of 50 and does not need padding.
     //
-    // The +1 is unconditional and that is the point - it is what guarantees a unit left over for
-    // storage, so the shop is not bare again the moment the shelves are filled.
+    // The +1 on capacity is what guarantees back stock. A target of exactly capacity is satisfied
+    // by a full shelf and an empty back room, and that is the shop one sale away from a gap; asking
+    // for one unit more means a box gets ordered and the remainder of it lands in storage.
     //
     // What counts as "already have"
     // -----------------------------
@@ -56,7 +57,8 @@ namespace SupermarketTweaks
                 new ConfigDescription("Keep at least this many units of every product in the shop, " +
                     "counting shelves, storage, ground boxes and anything being carried. It is a " +
                     "floor on the total, not a bonus on top: a product whose shelves already hold " +
-                    "more than this is unaffected. 0 orders only enough to fill the shelves.",
+                    "more than this is unaffected. 0 means fill the shelves and keep one spare, " +
+                    "which is the least that still leaves something in the back room.",
                     new AcceptableValueRange<int>(0, 2000)));
             IncludeShelvedButEmpty = cfg.Bind("Ordering", "OnlyProductsWithShelves", true,
                 "Only order products that actually have a shelf row assigned. Ordering anything " +
@@ -284,8 +286,11 @@ namespace SupermarketTweaks
                 // back room, in a box on the floor, or in someone's arms.
                 int have = shelf.OnShelf + inStorage + onFloor + inHand;
 
-                // Fill the shelves, or hold the minimum, whichever asks for more.
-                int target = Mathf.Max(shelf.Capacity, minimum);
+                // Fill the shelves and keep one spare, or hold the minimum, whichever asks for
+                // more. The +1 on capacity is what guarantees back stock: a target of exactly
+                // capacity is met by a full shelf and an empty back room, which is the shop one
+                // sale away from a gap.
+                int target = Mathf.Max(shelf.Capacity + 1, minimum);
 
                 int shortfall = target - have;
                 if (shortfall <= 0) continue;
@@ -293,8 +298,11 @@ namespace SupermarketTweaks
                 int perBox = listing.productsData[id].maxItemsPerBox;
                 if (perBox <= 0) continue;
 
-                // +1 guarantees the leftover, including when the shortfall divides exactly.
-                int boxes = (shortfall / perBox) + 1;
+                // Round up, not floor-plus-one. The leftover is guaranteed by the target now, so
+                // the old unconditional extra box would be a second helping of the same guarantee -
+                // and on a shortfall that divides exactly by the box size it ordered a whole box
+                // nobody needed.
+                int boxes = (shortfall + perBox - 1) / perBox;
 
                 // Subtract what is already on the order, which is what makes pressing twice a
                 // no-op rather than a double order.
