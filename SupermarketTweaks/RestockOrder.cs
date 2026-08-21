@@ -26,9 +26,12 @@ namespace SupermarketTweaks
     //
     // What counts as "already have"
     // -----------------------------
-    // Storage stock, boxes still sitting on the floor from a delivery, and boxes already in the
-    // order cart. Counting only storage made pressing twice order everything twice: ordering moves
-    // nothing into storage, so the second press saw the same empty shop and the same need.
+    // Storage stock, boxes still sitting on the floor from a delivery, boxes being carried by an
+    // employee or a player, and boxes already in the order cart - the same four places the
+    // terminal's own "in storage" figure looks, plus the cart.
+    //
+    // Counting only storage made pressing twice order everything twice: ordering moves nothing into
+    // storage, so the second press saw the same empty shop and the same need.
     public static class RestockOrderConfig
     {
         internal static ConfigEntry<bool> Enabled;
@@ -137,6 +140,56 @@ namespace SupermarketTweaks
             return counts;
         }
 
+        // Units in a box someone is currently holding.
+        //
+        // A restocker who has picked a box up out of storage is carrying stock that is on its way
+        // to a shelf, and a player walking one across the shop is no different. Neither is in
+        // storage and neither is on the floor, so without this they read as gone - and the shop
+        // orders a replacement for a box that is three metres from the shelf it belongs on.
+        //
+        // This is exactly what the terminal's own "in storage" figure counts. OrderingDevice
+        // .UpdateProductExistences sums four sources into one number: storage containers, ground
+        // boxes, employees via NPC_Info.boxProductID/boxNumberOfProducts, and players via
+        // PlayerSyncCharacter.syncedProductID/syncedNumberOfProducts. We were reading the first two.
+        private static Dictionary<int, int> CarriedUnits(NPC_Manager mgr)
+        {
+            var counts = new Dictionary<int, int>();
+
+            var employees = mgr != null ? mgr.employeeParentOBJ : null;
+            if (employees != null)
+            {
+                foreach (Transform employee in employees.transform)
+                {
+                    var info = employee.GetComponent<NPC_Info>();
+                    if (info == null || info.boxProductID < 0 || info.boxNumberOfProducts <= 0) continue;
+
+                    int prev;
+                    counts[info.boxProductID] = counts.TryGetValue(info.boxProductID, out prev)
+                        ? prev + info.boxNumberOfProducts : info.boxNumberOfProducts;
+                }
+            }
+
+            // Players are reached through the network manager rather than the scene, because in
+            // multiplayer the other player's character is only ever a synced object - and their
+            // box counts towards the shop's stock just as much as the host's does.
+            var manager = Mirror.NetworkManager.singleton as CustomNetworkManager;
+            if (manager != null)
+            {
+                foreach (var player in manager.GamePlayers)
+                {
+                    if (player == null) continue;
+                    var sync = player.GetComponent<PlayerSyncCharacter>();
+                    if (sync == null || sync.syncedProductID < 0 || sync.syncedNumberOfProducts <= 0) continue;
+
+                    int prev;
+                    counts[sync.syncedProductID] = counts.TryGetValue(sync.syncedProductID, out prev)
+                        ? prev + sync.syncedNumberOfProducts : sync.syncedNumberOfProducts;
+                }
+            }
+
+            return counts;
+        }
+
         // Empty slots per product across every row assigned to it.
         private static Dictionary<int, int> OpenShelfSpace(NPC_Manager mgr)
         {
@@ -178,6 +231,7 @@ namespace SupermarketTweaks
             var space = OpenShelfSpace(mgr);
             var cart = CartBoxes(blackboard);
             var floor = FloorBoxUnits(mgr);
+            var carried = CarriedUnits(mgr);
 
             foreach (int id in listing.availableProducts)
             {
@@ -187,8 +241,12 @@ namespace SupermarketTweaks
                 int onFloor;
                 floor.TryGetValue(id, out onFloor);
 
-                // Anything already delivered counts, wherever it is standing.
-                if (inStorage + onFloor > 0) continue;
+                int inHand;
+                carried.TryGetValue(id, out inHand);
+
+                // Anything already delivered counts, wherever it is standing - including in
+                // someone's arms.
+                if (inStorage + onFloor + inHand > 0) continue;
 
                 int open;
                 bool hasShelf = space.TryGetValue(id, out open);
