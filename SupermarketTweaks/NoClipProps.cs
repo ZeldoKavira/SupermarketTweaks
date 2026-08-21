@@ -22,6 +22,7 @@ namespace SupermarketTweaks
         internal static ConfigEntry<string> NameFilter;
         internal static ConfigEntry<bool> IncludeTriggers;
         internal static ConfigEntry<KeyboardShortcut> ListKey;
+        internal static ConfigEntry<float> ListRadius;
 
         public static void Init(ConfigFile cfg)
         {
@@ -35,8 +36,11 @@ namespace SupermarketTweaks
                 "Also disable trigger colliders on matches. Off by default: triggers are usually " +
                 "interaction volumes, and switching them off can break using the object.");
             ListKey = cfg.Bind("World", "ListPropsKey", new KeyboardShortcut(KeyCode.F11),
-                "Log every object matching the filter, with its colliders. Use this to find the " +
-                "right name.");
+                "Log every collider near you, closest first. Stand against whatever is blocking " +
+                "you and press this to find out what it is actually called.");
+            ListRadius = cfg.Bind("World", "ListRadiusMetres", 5f,
+                new ConfigDescription("How far around you to look when listing colliders.",
+                    new AcceptableValueRange<float>(1f, 30f)));
         }
 
         internal static bool On => Enabled != null && Enabled.Value;
@@ -156,31 +160,52 @@ namespace SupermarketTweaks
             if (n > 0) Plugin.Log.LogInfo($"[NoClip] Restored {n} collider(s).");
         }
 
-        // Finding the right name is the hard part, so make it answerable in game.
+        // Finding the right name is the hard part, so answer it by proximity instead of by guess.
+        //
+        // Filtering by name assumed the placed object is called something like its asset
+        // (115_GiantElephant); it is not, and a filter that matches nothing tells you nothing about
+        // what IS there. Standing against the obstruction and listing what is within arm's reach
+        // cannot miss in the same way.
         private void ListMatches()
         {
-            var filters = NoClipPropsConfig.Filters();
-            int found = 0;
+            var cam = Camera.main;
+            Vector3 origin = cam != null ? cam.transform.position : transform.position;
+            float radius = NoClipPropsConfig.ListRadius != null
+                ? Mathf.Clamp(NoClipPropsConfig.ListRadius.Value, 1f, 30f) : 5f;
 
-            Plugin.Log.LogInfo($"[NoClip] Objects matching '{NoClipPropsConfig.NameFilter.Value}':");
+            var hits = new List<KeyValuePair<float, string>>();
 
-            foreach (var col in UnityEngine.Object.FindObjectsOfType<Collider>())
+            // OverlapSphere rather than FindObjectsOfType: it asks physics directly, so it returns
+            // exactly the things that could be blocking you, and nothing from the rest of the map.
+            foreach (var col in Physics.OverlapSphere(origin, radius, ~0, QueryTriggerInteraction.Collide))
             {
-                if (col == null || !MatchesHierarchy(col.transform, filters)) continue;
-                found++;
+                if (col == null) continue;
 
-                var path = col.name;
+                float d = Vector3.Distance(origin, col.ClosestPoint(origin));
+
+                string path = col.name;
                 var t = col.transform.parent;
                 int depth = 0;
-                while (t != null && depth++ < 4) { path = t.name + "/" + path; t = t.parent; }
+                while (t != null && depth++ < 5) { path = t.name + "/" + path; t = t.parent; }
 
-                Plugin.Log.LogInfo($"    {path}   [{col.GetType().Name}" +
-                                   $"{(col.isTrigger ? ", trigger" : "")}" +
-                                   $"{(col.enabled ? "" : ", already disabled")}]");
+                hits.Add(new KeyValuePair<float, string>(d,
+                    $"{d,5:0.00}m  {path}   [{col.GetType().Name}" +
+                    $"{(col.isTrigger ? ", trigger" : "")}" +
+                    $"{(col.enabled ? "" : ", disabled")}, layer {LayerMask.LayerToName(col.gameObject.layer)}]"));
             }
 
-            if (found == 0)
-                Plugin.Log.LogWarning("    nothing. Try a shorter filter, or check the object's real name.");
+            hits.Sort((a, b) => a.Key.CompareTo(b.Key));
+
+            Plugin.Log.LogInfo($"[NoClip] {hits.Count} collider(s) within {radius:0.#}m " +
+                               "(closest first) - the blocker is usually near the top:");
+            for (int i = 0; i < hits.Count && i < 40; i++)
+                Plugin.Log.LogInfo("    " + hits[i].Value);
+
+            if (hits.Count == 0)
+                Plugin.Log.LogWarning("    nothing at all - are you actually standing next to it?");
+            else
+                Plugin.Log.LogInfo("[NoClip] Put a distinctive part of the name into " +
+                                   "World/PropNameFilter, then turn DisablePropCollision on.");
         }
     }
 }
