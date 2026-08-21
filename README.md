@@ -15,8 +15,9 @@ BepInEx 5 mod for **Supermarket Together**.
   physics work per second.
 - **Automatic staff roles** — pick your cashiers in the F1 panel. They work the tills while the
   shop is open and switch to restocking while it's shut, then back at opening. Separately, storage
-  staff switch to restocking whenever no boxes are on the floor, and back the moment a delivery
-  lands. Roles are `NPC_Info.taskPriority` (1 cashier, 2 restocker, 3 storage, 4 security,
+  staff switch to restocking whenever no boxes are on the floor, security when the shop is closed
+  and empty, and technicians whenever nothing is broken — each switching back the moment their own
+  work reappears. Roles are `NPC_Info.taskPriority` (1 cashier, 2 restocker, 3 storage, 4 security,
   5 technician, 6 ordering, 7 manufacturing), changed through the game's own
   `CmdChangeEmployeePriority`.
 - **Sales restart each morning** — `RpcEndDay` calls `DailySaleReset()`, which clears

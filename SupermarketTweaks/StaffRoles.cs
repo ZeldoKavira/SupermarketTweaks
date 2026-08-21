@@ -30,6 +30,8 @@ namespace SupermarketTweaks
         internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<string> Cashiers;
         internal static ConfigEntry<bool> StorageFallback;
+        internal static ConfigEntry<bool> SecurityHelps;
+        internal static ConfigEntry<bool> TechHelps;
         internal static ConfigEntry<float> IdleSeconds;
         internal static ConfigEntry<bool> Log;
 
@@ -40,6 +42,13 @@ namespace SupermarketTweaks
             Cashiers = cfg.Bind("Staff", "CashierNames", "",
                 "Names of the staff who work the tills during opening hours, comma separated. " +
                 "Edit this from the F1 panel rather than by hand.");
+            SecurityHelps = cfg.Bind("Staff", "SecurityHelpsRestock", true,
+                "Security switch to restocking once the shop is closed AND empty, and back to " +
+                "security when it opens - same rule as the cashiers, since there is nobody left " +
+                "to steal from either.");
+            TechHelps = cfg.Bind("Staff", "TechHelpsRestock", true,
+                "Technicians switch to restocking whenever nothing is broken, at any hour, and " +
+                "back the moment something breaks.");
             StorageFallback = cfg.Bind("Staff", "StorageHelpsRestock", true,
                 "Storage staff switch to restocking whenever there are no boxes on the floor, and " +
                 "switch back as soon as a delivery lands.");
@@ -75,6 +84,8 @@ namespace SupermarketTweaks
         internal const int Cashier = 1;
         internal const int Restocker = 2;
         internal const int Storage = 3;
+        internal const int Security = 4;
+        internal const int Technician = 5;
 
         internal static string Status = "off";
 
@@ -175,6 +186,8 @@ namespace SupermarketTweaks
 
                 HandleCashiers(mgr, data);
                 HandleStorage(mgr);
+                HandleSecurity(mgr, data);
+                HandleTech(mgr);
             }
             catch (Exception e) { Plugin.Log.LogError($"[Staff] {e.Message}"); }
         }
@@ -225,6 +238,83 @@ namespace SupermarketTweaks
                 : customersLeft > 0
                     ? $"closed - {names.Count} still on tills, {customersLeft} customer(s) inside"
                     : $"closed and empty - {names.Count} restocking";
+        }
+
+        // Security follow the cashiers: no customers, nobody to steal.
+        //
+        // Same empty-store condition rather than just "closed", for the same reason - the people
+        // still queueing are exactly the ones a thief would be among, and the checkout-starvation
+        // path means a closing shop is when theft is most likely, not least.
+        private void HandleSecurity(NPC_Manager mgr, GameData data)
+        {
+            if (!StaffRolesConfig.SecurityHelps.Value) return;
+
+            bool open = data.isSupermarketOpen;
+            int customersLeft = mgr.customersnpcParentOBJ != null
+                ? mgr.customersnpcParentOBJ.transform.childCount : 0;
+
+            var cashiers = StaffRolesConfig.CashierList();
+
+            for (int i = 0; i < mgr.employeesArray.Length; i++)
+            {
+                string name = StaffRoles.NameOf(mgr, i);
+                if (name == null || cashiers.Contains(name)) continue;   // the cashier rule owns those
+
+                int role = StaffRoles.RoleOf(mgr, i);
+
+                if (role == StaffRoles.Security && !open && customersLeft == 0)
+                {
+                    StaffRoles.Remember(i, StaffRoles.Security);
+                    StaffRoles.SetRole(mgr, i, StaffRoles.Restocker, "shop closed and empty");
+                }
+                else if (role == StaffRoles.Restocker && open
+                         && StaffRoles.Recall(i, -1) == StaffRoles.Security)
+                {
+                    StaffRoles.SetRole(mgr, i, StaffRoles.Security, "shop open");
+                }
+                else if (role == StaffRoles.Security && StaffRoles.Recall(i, -1) == StaffRoles.Security)
+                {
+                    StaffRoles.Forget(i);      // observed back on duty
+                }
+            }
+        }
+
+        // Technicians restock while nothing is broken.
+        //
+        // brokenFurnitureList is the technician's entire work queue - GetFurnitureToFix reads it and
+        // nothing else - so an empty list means there is literally no repair work in existence, at
+        // any hour. Unlike the storage rule this needs no debounce in either direction: breakages
+        // are discrete events, not a value hovering around zero.
+        private void HandleTech(NPC_Manager mgr)
+        {
+            if (!StaffRolesConfig.TechHelps.Value) return;
+
+            bool anythingBroken = mgr.brokenFurnitureList != null && mgr.brokenFurnitureList.Count > 0;
+            var cashiers = StaffRolesConfig.CashierList();
+
+            for (int i = 0; i < mgr.employeesArray.Length; i++)
+            {
+                string name = StaffRoles.NameOf(mgr, i);
+                if (name == null || cashiers.Contains(name)) continue;
+
+                int role = StaffRoles.RoleOf(mgr, i);
+
+                if (role == StaffRoles.Technician && !anythingBroken)
+                {
+                    StaffRoles.Remember(i, StaffRoles.Technician);
+                    StaffRoles.SetRole(mgr, i, StaffRoles.Restocker, "nothing is broken");
+                }
+                else if (role == StaffRoles.Restocker && anythingBroken
+                         && StaffRoles.Recall(i, -1) == StaffRoles.Technician)
+                {
+                    StaffRoles.SetRole(mgr, i, StaffRoles.Technician,
+                                       $"{mgr.brokenFurnitureList.Count} thing(s) broken");
+                }
+                else if (role == StaffRoles.Technician && StaffRoles.Recall(i, -1) == StaffRoles.Technician)
+                {
+                    StaffRoles.Forget(i);
+                }
+            }
         }
 
         // Storage staff restock when there is nothing to put away.
