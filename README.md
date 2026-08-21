@@ -37,6 +37,10 @@ BepInEx 5 mod for **Supermarket Together**.
   matching a name filter (default `Elephant`), for props that physically block somewhere you want
   to reach. Colliders only, never the object itself, and purely local — nothing is networked. F11
   lists what matches so you can correct the filter without a rebuild.
+- **One-press restock order** — fills the order cart with every product that has no stock left in
+  storage, ordering `floor(openShelfSpace / maxItemsPerBox) + 1` boxes each so the shelves fill
+  *and* at least one unit is left over for the back room. Products with no shelf row are skipped.
+  F8, or the button shown while the ordering terminal is open.
 - **In-game config** — F1. F5 toggles the speed boost. F10 dumps easter-egg chat phrases.
 
 ## Multiplayer

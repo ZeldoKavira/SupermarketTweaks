@@ -34,6 +34,7 @@ namespace SupermarketTweaks
             AutoSalesConfig.Init(Config);
             StaffRolesConfig.Init(Config);
             NetSyncConfig.Init(Config);
+            RestockOrderConfig.Init(Config);
             NoClipPropsConfig.Init(Config);
             EasterDumpConfig.Init(Config);
             SettingsWindow.Init(Config);
@@ -50,6 +51,7 @@ namespace SupermarketTweaks
             go.AddComponent<NetSyncDriver>();
             go.AddComponent<EasterDumper>();
             go.AddComponent<NoClipPropsDriver>();
+            go.AddComponent<RestockOrderDriver>();
             go.AddComponent<SettingsWindow>();
 
             ForwardUnityErrors();
