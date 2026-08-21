@@ -66,6 +66,7 @@ namespace SupermarketTweaks
         private const string Hello    = "SMT/hello";
         private const string Settings = "SMT/settings";
         private const string Alarm    = "SMT/alarm";
+        private const string Scanned  = "SMT/scanned";
 
         internal static string Status = "not connected";
 
@@ -246,6 +247,10 @@ namespace SupermarketTweaks
                         // Catch them up if a robbery is already in progress.
                         if (AntiTheftConfig.SlowOn && AntiTheft.AlarmActive)
                             conn.Send(new SmtMessage { Kind = Alarm, Payload = "1" }, 0);
+                        // And on what has been researched. This is the case the live broadcast
+                        // cannot cover: everything scanned before they joined, or while they were
+                        // away, happened with nobody on the other end to hear it.
+                        conn.Send(new SmtMessage { Kind = Scanned, Payload = ResearchTracker.Serialize() }, 0);
                         break;
 
                     default:
@@ -272,6 +277,12 @@ namespace SupermarketTweaks
                 {
                     case Settings:
                         ApplySettings(msg.Payload);
+                        break;
+
+                    case Scanned:
+                        // The host's list is the record - see ResearchTracker.ApplyFromHost for why
+                        // this replaces rather than merges.
+                        ResearchTracker.ApplyFromHost(msg.Payload);
                         break;
 
                     case Alarm:
@@ -377,6 +388,24 @@ namespace SupermarketTweaks
                     if (_moddedClients.Contains(kv.Key)) kv.Value.Send(msg, 0);
             }
             catch (Exception e) { Plugin.Log.LogError($"[NetSync] alarm: {e.Message}"); }
+        }
+
+        // Sent when a product goes into the researcher.
+        //
+        // Every machine sees the same Rpc and records it independently, so this is not what keeps
+        // two live players in step - it is what stops a client's list drifting when it was not
+        // connected for a scan. Cheap enough to send unconditionally rather than diff.
+        internal static void BroadcastScanned()
+        {
+            try
+            {
+                if (!NetSyncConfig.On || !NetworkServer.active || _moddedClients.Count == 0) return;
+
+                var msg = new SmtMessage { Kind = Scanned, Payload = ResearchTracker.Serialize() };
+                foreach (var kv in NetworkServer.connections)
+                    if (_moddedClients.Contains(kv.Key)) kv.Value.Send(msg, 0);
+            }
+            catch (Exception e) { Plugin.Log.LogError($"[NetSync] scanned: {e.Message}"); }
         }
 
         // Called when the host changes a pricing setting, so clients don't sit on a stale copy.

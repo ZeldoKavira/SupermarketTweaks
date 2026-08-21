@@ -68,7 +68,7 @@ namespace SupermarketTweaks
 
             // The packaging employee fails silently in game - case 6 sends them to the rest spot
             // without a word when any of its four gates is shut - so the reason belongs on screen.
-            GUILayout.Label($"   orders: {StaffRoles.OrdersStatus}", Rich());
+            GUILayout.Label($"   orders: {StaffRoles.OrdersStatus}   |   research: {ResearchTracker.Status}", Rich());
 
             // Manual sweeps stay available to a client on purpose - CmdUpdateProductPrice accepts
             // them, and it is useful to be able to force one without asking the host.

@@ -33,6 +33,7 @@ namespace SupermarketTweaks
             AntiTheftConfig.Init(Config);
             AutoSalesConfig.Init(Config);
             SeasonalEventsConfig.Init(Config);
+            ResearchTrackerConfig.Init(Config);
             StaffRolesConfig.Init(Config);
             NetSyncConfig.Init(Config);
             PlacementOverlapConfig.Init(Config);
