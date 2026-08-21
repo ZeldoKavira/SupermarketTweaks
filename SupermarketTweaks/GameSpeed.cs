@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using BepInEx.Configuration;
 using Mirror;
 using UnityEngine;
@@ -96,16 +97,70 @@ namespace SupermarketTweaks
 
         private float _next;
         private float _lastApplied = -1f;
+        private static FieldInfo _readyField;
+        private static bool _lookedForReady;
+        private static bool _warnedNoReady;
+        private bool _wasReady;
         private int _lastDay = int.MinValue;
         private bool _lastAlarm;
 
         internal static string Status = "off";
 
+        // Do not touch the clock until the level has finished setting itself up.
+        //
+        // This cost an afternoon. Builder_Main.RetrieveInitialBehaviours waits two seconds before
+        // caching Camera.main, FirstPersonController.Instance and GameData.Instance, and only then
+        // sets initialConfiguration = true. WaitForSeconds is SCALED time, so at 3x that two second
+        // grace period is over in two thirds of a second - well before those objects exist. The
+        // coroutine then dereferences a null, dies, and initialConfiguration stays false forever:
+        //
+        //   NullReferenceException
+        //     at Builder_Main+<RetrieveInitialBehaviours>d__89.MoveNext ()
+        //
+        // and Builder_Main.Update opens with "if (!initialConfiguration) return;", so Tab silently
+        // stops opening the build menu for the rest of the session. Nothing in our own log, because
+        // the exception is the game's.
+        //
+        // That same flag is the exact readiness signal we need, so it is read directly rather than
+        // approximated with a timer. No Builder_Main in the scene at all means the main menu, where
+        // there is nothing worth speeding up anyway.
+        private static bool LevelReady()
+        {
+            var builder = UnityEngine.Object.FindObjectOfType<Builder_Main>();
+            if (builder == null) return false;
+
+            if (!_lookedForReady)
+            {
+                _lookedForReady = true;
+                _readyField = typeof(Builder_Main).GetField("initialConfiguration",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+            }
+
+            if (_readyField == null)
+            {
+                // Renamed by a game update. Falling back to "the objects it needs all exist" keeps
+                // the guard rather than silently dropping it - the point is not to run early.
+                if (!_warnedNoReady)
+                {
+                    _warnedNoReady = true;
+                    Plugin.Log.LogWarning("[GameSpeed] Builder_Main.initialConfiguration not found; " +
+                                          "falling back to a looser readiness check.");
+                }
+                // FirstPersonController lives outside Assembly-CSharp, so it is not part of this
+                // check - GameData and the camera are enough to say the level exists.
+                return GameData.Instance != null && Camera.main != null;
+            }
+
+            return (bool)_readyField.GetValue(builder);
+        }
+
         private void Update()
         {
             try
             {
-                if (GameSpeedConfig.SuperKey != null && GameSpeedConfig.SuperKey.Value.IsDown())
+                // Both toggles apply immediately, so both need the readiness gate too.
+                if (GameSpeedConfig.SuperKey != null && GameSpeedConfig.SuperKey.Value.IsDown()
+                    && LevelReady())
                 {
                     if (NetworkClient.active && !NetworkServer.active)
                     {
@@ -118,7 +173,8 @@ namespace SupermarketTweaks
                     }
                 }
 
-                if (GameSpeedConfig.ToggleKey != null && GameSpeedConfig.ToggleKey.Value.IsDown())
+                if (GameSpeedConfig.ToggleKey != null && GameSpeedConfig.ToggleKey.Value.IsDown()
+                    && LevelReady())
                 {
                     // On a client the host owns the clock: it drives the shared simulation, and it
                     // rebroadcasts on every change, so a local toggle would be silently undone the
@@ -138,6 +194,23 @@ namespace SupermarketTweaks
                 _next = Time.unscaledTime + 0.5f;
 
                 if (_baseFixedDelta < 0f) _baseFixedDelta = Time.fixedDeltaTime;
+
+                if (!LevelReady())
+                {
+                    // Hand the clock back if we are mid-transition, so a level that starts loading
+                    // while the boost is on does not inherit it.
+                    if (_wasReady || _lastApplied > 1f)
+                    {
+                        Time.timeScale = 1f;
+                        if (_baseFixedDelta > 0f) Time.fixedDeltaTime = _baseFixedDelta;
+                        _lastApplied = -1f;
+                        _lastDay = int.MinValue;
+                    }
+                    _wasReady = false;
+                    Status = "waiting for the level to finish loading";
+                    return;
+                }
+                _wasReady = true;
 
                 // The end-of-day reset writes timeScale directly, so the only reliable way to catch
                 // it is to notice the value is no longer what we set.
