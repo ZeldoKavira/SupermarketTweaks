@@ -59,6 +59,7 @@ namespace SupermarketTweaks
             go.AddComponent<NoClipPropsDriver>();
             go.AddComponent<RestockOrderDriver>();
             go.AddComponent<ManufactureOrderDriver>();
+            go.AddComponent<ManufactureButtonUI>();
             go.AddComponent<OrderButtonUI>();
             go.AddComponent<UIDumper>();
             go.AddComponent<PlacementOverlapDriver>();

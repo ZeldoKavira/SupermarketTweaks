@@ -47,8 +47,10 @@ namespace SupermarketTweaks
                 "to refill the manufactured shelves.");
             Key = cfg.Bind("Manufacturing", "QuickProductionKey", new KeyboardShortcut(KeyCode.F9),
                 "Queues the runs needed to refill the manufactured shelves.");
-            ShowButton = cfg.Bind("Manufacturing", "ShowProductionButton", true,
-                "Draw an overlay button while a manufacturing machine's interface is open.");
+            ShowButton = cfg.Bind("Manufacturing", "ShowProductionButton", false,
+                "Draw a fallback overlay button while a machine's interface is open. Off by " +
+                "default now that a real button sits in the machine's own panel - turn it on if " +
+                "that one fails to appear.");
             MaxRuns = cfg.Bind("Manufacturing", "MaxQueuedRuns", 20,
                 new ConfigDescription("Never add more than this many runs in one press. Each run " +
                     "consumes ingredients off your own shelves, so a full refill of an empty shop " +
@@ -319,12 +321,17 @@ namespace SupermarketTweaks
             return best;
         }
 
-        internal static void Run()
+        internal static void Run() => Run(null);
+
+        // machine == null means "whichever one you are standing at", which is what the hotkey and
+        // the overlay want. The in-panel button passes its own instead: nearest would nearly always
+        // agree, and nearly is how you queue into the wrong machine when two stand side by side.
+        internal static void Run(ManufacturingProduction machine)
         {
             try
             {
                 var mgr = NPC_Manager.Instance;
-                var machine = Target();
+                if (machine == null) machine = Target();
                 if (mgr == null || machine == null)
                 {
                     LastResult = "no manufacturing machine found";
