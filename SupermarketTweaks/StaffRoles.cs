@@ -13,13 +13,17 @@ namespace SupermarketTweaks
     //   1 cashier   2 restocker   3 storage   4 security
     //   5 technician   6 ordering   7 manufacturing
     //
-    // Two rules, both about the same waste:
+    // Every rule is about the same waste - an employee standing still - and each has its own test
+    // for when that is true: the shop is shut and empty (cashiers, security), nothing is broken
+    // (technicians), no boxes are on the floor (storage staff), no orders are queued (order
+    // fillers).
     //
-    //   Cashiers have nothing to do while the shop is shut, which is most of the morning and all
-    //   night. They become restockers until it opens.
-    //
-    //   Storage staff have nothing to do when no boxes are on the floor, at any hour. Same fix,
-    //   different trigger.
+    // Where a borrowed employee GOES is a separate question from whether they are idle, and it is
+    // answered fresh every tick by HelperRole: storage while boxes are on the floor, restocking
+    // once it is clear. Sending everyone to restocking unconditionally was wrong whenever a
+    // delivery had just landed - shelves are refilled from storage, so a restocker with an empty
+    // back room has nothing to carry, while the boxes nobody is putting away are the real
+    // bottleneck. Borrowed staff now follow the work between the two as it moves.
     //
     // Changes go through NPC_Manager.CmdChangeEmployeePriority, the same command the in-game
     // employee menu uses. It is requiresAuthority: false, but this only ever runs on the host: the
@@ -32,6 +36,7 @@ namespace SupermarketTweaks
         internal static ConfigEntry<bool> StorageFallback;
         internal static ConfigEntry<bool> SecurityHelps;
         internal static ConfigEntry<bool> TechHelps;
+        internal static ConfigEntry<bool> OrderingHelps;
         internal static ConfigEntry<float> IdleSeconds;
         internal static ConfigEntry<bool> Log;
         internal static ConfigEntry<string> RememberedRoles;
@@ -50,6 +55,10 @@ namespace SupermarketTweaks
             TechHelps = cfg.Bind("Staff", "TechHelpsRestock", true,
                 "Technicians switch to restocking whenever nothing is broken, at any hour, and " +
                 "back the moment something breaks.");
+            OrderingHelps = cfg.Bind("Staff", "OrderingHelpsRestock", true,
+                "Order fillers switch to storage or restocking whenever the packaging queue is " +
+                "empty, and back the moment an order comes in. Anyone halfway through packing an " +
+                "order is left alone.");
             StorageFallback = cfg.Bind("Staff", "StorageHelpsRestock", true,
                 "Storage staff switch to restocking whenever there are no boxes on the floor, and " +
                 "switch back as soon as a delivery lands.");
@@ -91,8 +100,33 @@ namespace SupermarketTweaks
         internal const int Storage = 3;
         internal const int Security = 4;
         internal const int Technician = 5;
+        internal const int Ordering = 6;
 
         internal static string Status = "off";
+
+        // Where a borrowed employee is most useful right now.
+        //
+        // Restocking was the only answer before, and it was the wrong one whenever a delivery was
+        // sitting on the floor: shelves are refilled FROM storage, so a restocker with an empty back
+        // room has nothing to carry, while the boxes nobody is putting away are the actual
+        // bottleneck. Emptying the floor first and refilling the shelves second is the order the
+        // work genuinely happens in.
+        //
+        // boxesOBJ is the same parent GetRandomGroundBox draws from, so "has children" is exactly
+        // "there is a box a storage worker could pick up".
+        internal static int HelperRole(NPC_Manager mgr)
+        {
+            bool boxesWaiting = mgr != null && mgr.boxesOBJ != null
+                                && mgr.boxesOBJ.transform.childCount > 0;
+            return boxesWaiting ? Storage : Restocker;
+        }
+
+        // Is this employee currently standing in one of the two jobs we lend people to?
+        //
+        // Needed because the borrowed role is no longer a single fixed value: a cashier lent out
+        // may be found as either a storage worker or a restocker, and the "put them back" checks
+        // have to recognise both.
+        internal static bool IsHelperRole(int role) => role == Storage || role == Restocker;
 
         // What each employee was doing before we moved them, so they can be put back rather than
         // being assumed to have started as a cashier.
@@ -154,6 +188,16 @@ namespace SupermarketTweaks
                 if (go == null) return null;
                 var info = go.GetComponent<NPC_Info>();
                 return info != null ? info.NPCName : null;
+            }
+            catch { return null; }
+        }
+
+        internal static NPC_Info InfoOf(NPC_Manager mgr, int index)
+        {
+            try
+            {
+                var go = mgr.employeesArray[index];
+                return go != null ? go.GetComponent<NPC_Info>() : null;
             }
             catch { return null; }
         }
@@ -227,6 +271,7 @@ namespace SupermarketTweaks
         private float _next;
         private float _boxesEmptySince = -1f;
         private float _boxesPresentSince = -1f;
+        private float _ordersEmptySince = -1f;
         private bool _wasOpen;
         private bool _knowOpen;
 
@@ -255,6 +300,7 @@ namespace SupermarketTweaks
                 HandleStorage(mgr);
                 HandleSecurity(mgr, data);
                 HandleTech(mgr);
+                HandleOrdering(mgr);
             }
             catch (Exception e) { Plugin.Log.LogError($"[Staff] {e.Message}"); }
         }
@@ -294,8 +340,16 @@ namespace SupermarketTweaks
                     // the doors stopped admitting people, and anyone already inside still has to
                     // queue and pay. Pulling the cashiers the moment the sign flips would strand
                     // them - and a customer who cannot find a free checkout turns thief outright.
+                    //
+                    // Remember() only records the first time, so re-running this as the helper role
+                    // flips between storage and restocking cannot overwrite "was a cashier".
                     StaffRoles.Remember(mgr, i, role);
-                    StaffRoles.SetRole(mgr, i, StaffRoles.Restocker, "shop closed and empty");
+
+                    int want = StaffRoles.HelperRole(mgr);
+                    if (role != want)
+                        StaffRoles.SetRole(mgr, i, want, want == StaffRoles.Storage
+                            ? "shop closed and empty, boxes waiting"
+                            : "shop closed and empty, floor clear");
                 }
             }
 
@@ -304,7 +358,8 @@ namespace SupermarketTweaks
                 ? $"open - {names.Count} on tills"
                 : customersLeft > 0
                     ? $"closed - {names.Count} still on tills, {customersLeft} customer(s) inside"
-                    : $"closed and empty - {names.Count} restocking";
+                    : $"closed and empty - {names.Count} on " +
+                      (StaffRoles.HelperRole(mgr) == StaffRoles.Storage ? "storage" : "restocking");
         }
 
         // Security follow the cashiers: no customers, nobody to steal.
@@ -332,12 +387,20 @@ namespace SupermarketTweaks
                 if (role == StaffRoles.Security && !open && customersLeft == 0)
                 {
                     StaffRoles.Remember(mgr, i, StaffRoles.Security);
-                    StaffRoles.SetRole(mgr, i, StaffRoles.Restocker, "shop closed and empty");
+                    StaffRoles.SetRole(mgr, i, StaffRoles.HelperRole(mgr), "shop closed and empty");
                 }
-                else if (role == StaffRoles.Restocker && open
+                else if (StaffRoles.IsHelperRole(role) && open
                          && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Security)
                 {
                     StaffRoles.SetRole(mgr, i, StaffRoles.Security, "shop open");
+                }
+                else if (StaffRoles.IsHelperRole(role) && !open && customersLeft == 0
+                         && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Security)
+                {
+                    // Still lent out - follow the work as it moves between the floor and the
+                    // shelves rather than staying wherever they first landed.
+                    int want = StaffRoles.HelperRole(mgr);
+                    if (role != want) StaffRoles.SetRole(mgr, i, want, "following the work");
                 }
                 else if (role == StaffRoles.Security && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Security)
                 {
@@ -369,19 +432,112 @@ namespace SupermarketTweaks
                 if (role == StaffRoles.Technician && !anythingBroken)
                 {
                     StaffRoles.Remember(mgr, i, StaffRoles.Technician);
-                    StaffRoles.SetRole(mgr, i, StaffRoles.Restocker, "nothing is broken");
+                    StaffRoles.SetRole(mgr, i, StaffRoles.HelperRole(mgr), "nothing is broken");
                 }
-                else if (role == StaffRoles.Restocker && anythingBroken
+                else if (StaffRoles.IsHelperRole(role) && anythingBroken
                          && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Technician)
                 {
                     StaffRoles.SetRole(mgr, i, StaffRoles.Technician,
                                        $"{mgr.brokenFurnitureList.Count} thing(s) broken");
+                }
+                else if (StaffRoles.IsHelperRole(role) && !anythingBroken
+                         && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Technician)
+                {
+                    int want = StaffRoles.HelperRole(mgr);
+                    if (role != want) StaffRoles.SetRole(mgr, i, want, "following the work");
                 }
                 else if (role == StaffRoles.Technician && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Technician)
                 {
                     StaffRoles.Forget(mgr, i);
                 }
             }
+        }
+
+        // Order fillers help out when the packaging queue is empty.
+        //
+        // Their entire work queue is OrderPackaging.Instance.ordersData - NPC_Manager case 6 asks
+        // RetrievePackagingFreeOrderIndex() for the first non-empty entry, and if there is none it
+        // sends them to state 10, which walks to the rest spot and waits. So an empty array means
+        // an employee who is provably doing nothing.
+        //
+        // The catch is that taking an order REMOVES it from that array
+        // (OrderPackaging.RemoveOrderFromEmployee), so someone mid-pack looks idle by the queue
+        // alone. packagingAssignedOrderProducts is what they are still carrying out, and it is
+        // checked per employee before moving anyone - pulling them mid-order would drop the box on
+        // the floor (case 6 state 0 does exactly that when equippedItem > 0) and lose the order.
+        private void HandleOrdering(NPC_Manager mgr)
+        {
+            if (!StaffRolesConfig.OrderingHelps.Value) return;
+
+            bool anyOrders = false;
+            var packaging = OrderPackaging.Instance;
+            if (packaging != null && packaging.isOrderDepartmentActivated && packaging.ordersData != null)
+            {
+                foreach (var order in packaging.ordersData)
+                {
+                    if (string.IsNullOrEmpty(order)) continue;
+                    anyOrders = true;
+                    break;
+                }
+            }
+
+            float now = Time.unscaledTime;
+            float delay = Mathf.Max(1f, StaffRolesConfig.IdleSeconds.Value);
+
+            if (anyOrders) _ordersEmptySince = -1f;
+            else if (_ordersEmptySince < 0f) _ordersEmptySince = now;
+
+            bool quietLongEnough = !anyOrders && _ordersEmptySince > 0f
+                                   && now - _ordersEmptySince >= delay;
+
+            var cashiers = StaffRolesConfig.CashierList();
+
+            for (int i = 0; i < mgr.employeesArray.Length; i++)
+            {
+                string name = StaffRoles.NameOf(mgr, i);
+                if (name == null || cashiers.Contains(name)) continue;
+
+                int role = StaffRoles.RoleOf(mgr, i);
+
+                if (role == StaffRoles.Ordering && quietLongEnough && !MidOrder(mgr, i))
+                {
+                    StaffRoles.Remember(mgr, i, StaffRoles.Ordering);
+                    StaffRoles.SetRole(mgr, i, StaffRoles.HelperRole(mgr), "no orders waiting");
+                }
+                else if (StaffRoles.IsHelperRole(role) && anyOrders
+                         && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Ordering)
+                {
+                    // Not debounced going back, for the same reason the storage rule is not: an
+                    // order arriving is a real event, and a customer waiting on one is the thing
+                    // this whole rule exists to avoid.
+                    StaffRoles.SetRole(mgr, i, StaffRoles.Ordering, "orders waiting");
+                }
+                else if (StaffRoles.IsHelperRole(role) && !anyOrders
+                         && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Ordering)
+                {
+                    int want = StaffRoles.HelperRole(mgr);
+                    if (role != want) StaffRoles.SetRole(mgr, i, want, "following the work");
+                }
+                else if (role == StaffRoles.Ordering && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Ordering)
+                {
+                    StaffRoles.Forget(mgr, i);
+                }
+            }
+        }
+
+        // Halfway through packing an order, even though the queue looks empty.
+        private static bool MidOrder(NPC_Manager mgr, int index)
+        {
+            var info = StaffRoles.InfoOf(mgr, index);
+            if (info == null) return false;
+
+            if (info.equippedItem > 0) return true;
+            if (info.packagingAssignedOrderProducts != null
+                && info.packagingAssignedOrderProducts.Count > 0) return true;
+            if (info.packagingPackedOrderProducts != null
+                && info.packagingPackedOrderProducts.Count > 0) return true;
+
+            return !string.IsNullOrEmpty(info.packagingAssignedOrderData);
         }
 
         // Storage staff restock when there is nothing to put away.
@@ -419,6 +575,14 @@ namespace SupermarketTweaks
 
                 // Someone rostered as a cashier is the other rule's business, not this one.
                 if (cashiers.Contains(name)) continue;
+
+                // Nor is anyone on loan from another rule. Now that borrowed staff can be parked in
+                // the storage job, this rule would otherwise see a lent-out guard standing in
+                // storage and start managing them - both rules issuing a command for the same
+                // employee in the same tick, and this one having no idea they are owed back to
+                // security when the shop opens.
+                int remembered = StaffRoles.Recall(mgr, i, -1);
+                if (remembered >= 0 && remembered != StaffRoles.Storage) continue;
 
                 int role = StaffRoles.RoleOf(mgr, i);
 
