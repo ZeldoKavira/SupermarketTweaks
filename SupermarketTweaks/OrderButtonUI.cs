@@ -9,7 +9,8 @@ namespace SupermarketTweaks
     //
     // Built from the hierarchy the F12 dump reported rather than guessed:
     //
-    //   ExtraButtons                        pos=(0, -238)
+    //   Canvas_Manager / Tabs / ProductsOrder_Tab
+    //     ExtraButtons                      pos=(0, -238)
     //     BuyEmptyBoxButton                 pos=(-298, 0)  size=(140, 25)
     //       [RectTransform CanvasRenderer Image Button PlayMakerFSM]
     //       BuyEmptyBox_Text  "Buy Empty Box"
@@ -49,6 +50,7 @@ namespace SupermarketTweaks
         private const string CloneName     = "SMT_RestockAllButton";
 
         private float _next;
+        private int _complaints;
 
         private void Update()
         {
@@ -65,21 +67,55 @@ namespace SupermarketTweaks
 
         private void Ensure()
         {
-            // The template is found by walking from the live device rather than by a global name
-            // search: there can be more than one ordering terminal, and each needs its own button.
-            foreach (var device in UnityEngine.Object.FindObjectsOfType<OrderingDevice>(true))
+            var container = FindContainer();
+            if (container == null) return;
+
+            if (container.Find(CloneName) != null) return;          // already added
+
+            var template = container.Find(TemplateName);
+            if (template == null)
             {
-                var root = device.transform.root;
-                var container = FindDeep(root, ContainerName);
-                if (container == null) continue;
-
-                if (container.Find(CloneName) != null) continue;      // already added
-
-                var template = container.Find(TemplateName);
-                if (template == null) continue;
-
-                Build(container, template as RectTransform);
+                Complain($"Found {ContainerName} but no {TemplateName} under it.");
+                return;
             }
+
+            Build(container, template as RectTransform);
+        }
+
+        // ExtraButtons is NOT under the ordering terminal.
+        //
+        // Walking out from the OrderingDevice was the first attempt and it silently found nothing:
+        // the terminal is a prop in the shop, while the panel it opens lives in a global UI canvas
+        // that is no relation to it. The dump makes the real address plain:
+        //
+        //   Canvas_Manager / Tabs / ProductsOrder_Tab / ExtraButtons / BuyEmptyBoxButton
+        //
+        // So the canvas is the thing to search, and it is reached the same way the dump reached it:
+        // from the blackboard's shopping-list parent, climbing to its Canvas. That is a live object
+        // reference rather than a name lookup, and it costs nothing next to scanning every
+        // transform in the scene for one that happens to be called "ExtraButtons".
+        private static Transform FindContainer()
+        {
+            var gd = GameData.Instance;
+            var bb = gd != null ? gd.GetComponent<ManagerBlackboard>() : null;
+            var list = bb != null ? bb.shoppingListParent : null;
+            if (list == null) return null;                          // not in a game yet
+
+            var top = list.transform;
+            while (top.parent != null && top.GetComponent<Canvas>() == null) top = top.parent;
+
+            // FindDeep walks inactive children too, so the button gets added whether or not the
+            // order tab happens to be open - it only has to be built once.
+            return FindDeep(top, ContainerName);
+        }
+
+        // Rate-limited: this runs once a second, and a problem that lasts is a problem worth
+        // saying once, not sixty times a minute.
+        private void Complain(string message)
+        {
+            if (_complaints >= 3) return;
+            _complaints++;
+            Plugin.Log.LogWarning($"[OrderButton] {message}");
         }
 
         private void Build(Transform container, RectTransform template)

@@ -8,21 +8,22 @@ namespace SupermarketTweaks
 {
     // One press to order everything the shop has run out of.
     //
-    // "Run out of" means no stock in the BACK ROOM - a product can look fine on the shelf and still
-    // be one restock away from a gap, and that gap is expensive: an out-of-stock item is deleted
-    // from a customer's shopping list outright rather than deferred (WhichShelfHasItem returns -1,
-    // the id is removed, and they carry on without it).
+    // A gap is expensive: an out-of-stock item is deleted from a customer's shopping list outright
+    // rather than deferred (WhichShelfHasItem returns -1, the id is removed, and they carry on
+    // without it), so the shop loses that sale rather than delaying it.
     //
     // How many boxes
     // --------------
-    // Enough to fill every empty slot on that product's shelves AND leave at least one unit over,
-    // so there is something in storage afterwards rather than the shop being bare again the moment
-    // the shelves are filled:
+    //   target    = max(totalShelfCapacityForThatProduct, MinimumStock)
+    //   shortfall = target - everythingTheShopAlreadyOwns
+    //   boxes     = floor(shortfall / maxItemsPerBox) + 1
     //
-    //   boxes = floor(openShelfSpace / maxItemsPerBox) + 1
+    // The target is whichever is larger of "enough to fill the shelves" and the configured minimum,
+    // because the minimum is a floor on the total rather than a bonus on top - a product with 300
+    // slots of shelf is already past a minimum of 50 and does not need padding.
     //
-    // The +1 is unconditional and that is the point - it is what guarantees the leftover, including
-    // when the space divides exactly by the box size.
+    // The +1 is unconditional and that is the point - it is what guarantees a unit left over for
+    // storage, so the shop is not bare again the moment the shelves are filled.
     //
     // What counts as "already have"
     // -----------------------------
@@ -38,6 +39,7 @@ namespace SupermarketTweaks
         internal static ConfigEntry<KeyboardShortcut> Key;
         internal static ConfigEntry<bool> ShowButton;
         internal static ConfigEntry<bool> IncludeShelvedButEmpty;
+        internal static ConfigEntry<int> MinimumStock;
 
         public static void Init(ConfigFile cfg)
         {
@@ -50,6 +52,12 @@ namespace SupermarketTweaks
                 "Draw a fallback overlay button while the terminal is open. Off by default now " +
                 "that a real button sits in the terminal's own UI - turn it on if that one fails " +
                 "to appear.");
+            MinimumStock = cfg.Bind("Ordering", "MinimumStock", 0,
+                new ConfigDescription("Keep at least this many units of every product in the shop, " +
+                    "counting shelves, storage, ground boxes and anything being carried. It is a " +
+                    "floor on the total, not a bonus on top: a product whose shelves already hold " +
+                    "more than this is unaffected. 0 orders only enough to fill the shelves.",
+                    new AcceptableValueRange<int>(0, 2000)));
             IncludeShelvedButEmpty = cfg.Bind("Ordering", "OnlyProductsWithShelves", true,
                 "Only order products that actually have a shelf row assigned. Ordering anything " +
                 "else just fills the back room with stock no worker can ever put out.");
@@ -66,7 +74,9 @@ namespace SupermarketTweaks
         {
             public int ProductID;
             public int Boxes;
-            public int OpenSpace;
+            public int Target;      // what we are topping up to
+            public int Have;        // everything already in the shop, wherever it is
+            public int Shortfall;   // Target - Have
             public int PerBox;
         }
 
@@ -190,11 +200,21 @@ namespace SupermarketTweaks
             return counts;
         }
 
-        // Empty slots per product across every row assigned to it.
-        private static Dictionary<int, int> OpenShelfSpace(NPC_Manager mgr)
+        // Capacity and current contents per product, across every row assigned to it.
+        //
+        // Both halves are needed now rather than just the difference between them: the target is
+        // measured against total capacity, and what is already sitting on the shelf is stock like
+        // any other.
+        private struct Shelf
         {
-            var space = new Dictionary<int, int>();
-            if (mgr.shelvesOBJ == null) return space;
+            public int Capacity;
+            public int OnShelf;
+        }
+
+        private static Dictionary<int, Shelf> ShelfStats(NPC_Manager mgr)
+        {
+            var stats = new Dictionary<int, Shelf>();
+            if (mgr.shelvesOBJ == null) return stats;
 
             for (int i = 0; i < mgr.shelvesOBJ.transform.childCount; i++)
             {
@@ -205,17 +225,21 @@ namespace SupermarketTweaks
                 {
                     int id = data.productInfoArray[j * 2];
                     if (id < 0) continue;                       // unassigned row
-                    int have = data.productInfoArray[j * 2 + 1];
+                    int have = Mathf.Max(0, data.productInfoArray[j * 2 + 1]);
 
                     // The game's own capacity rule, rather than a guess from shelf dimensions.
                     int cap = mgr.GetMaxProductsPerRow(i, id);
-                    int free = Mathf.Max(0, cap - have);
 
-                    int prev;
-                    space[id] = space.TryGetValue(id, out prev) ? prev + free : free;
+                    Shelf prev;
+                    stats.TryGetValue(id, out prev);
+                    stats[id] = new Shelf
+                    {
+                        Capacity = prev.Capacity + cap,
+                        OnShelf  = prev.OnShelf + have,
+                    };
                 }
             }
-            return space;
+            return stats;
         }
 
         private static List<Need> Calculate(ManagerBlackboard blackboard, out int skippedNoShelf)
@@ -227,43 +251,50 @@ namespace SupermarketTweaks
             var listing = ProductListing.Instance;
             if (mgr == null || listing == null || listing.availableProducts == null) return needs;
 
+            int minimum = RestockOrderConfig.MinimumStock != null
+                ? Mathf.Max(0, RestockOrderConfig.MinimumStock.Value) : 0;
+
             var storage = StorageCounts(mgr);
-            var space = OpenShelfSpace(mgr);
+            var shelves = ShelfStats(mgr);
             var cart = CartBoxes(blackboard);
             var floor = FloorBoxUnits(mgr);
             var carried = CarriedUnits(mgr);
 
             foreach (int id in listing.availableProducts)
             {
-                int inStorage;
-                storage.TryGetValue(id, out inStorage);
+                Shelf shelf;
+                bool hasShelf = shelves.TryGetValue(id, out shelf);
 
-                int onFloor;
-                floor.TryGetValue(id, out onFloor);
-
-                int inHand;
-                carried.TryGetValue(id, out inHand);
-
-                // Anything already delivered counts, wherever it is standing - including in
-                // someone's arms.
-                if (inStorage + onFloor + inHand > 0) continue;
-
-                int open;
-                bool hasShelf = space.TryGetValue(id, out open);
-
-                if (!hasShelf)
+                if (!hasShelf && RestockOrderConfig.IncludeShelvedButEmpty.Value)
                 {
                     // No row names this product, so a restocker could never put it out - ordering it
-                    // would only fill the back room with stock that cannot move.
-                    if (RestockOrderConfig.IncludeShelvedButEmpty.Value) { skippedNoShelf++; continue; }
-                    open = 0;
+                    // would only fill the back room with stock that cannot move. Checked before the
+                    // minimum is applied, so raising the minimum does not start stockpiling every
+                    // product the shop has nowhere to sell from.
+                    skippedNoShelf++;
+                    continue;
                 }
+
+                int inStorage, onFloor, inHand;
+                storage.TryGetValue(id, out inStorage);
+                floor.TryGetValue(id, out onFloor);
+                carried.TryGetValue(id, out inHand);
+
+                // Everything the shop already owns, wherever it is standing: on the shelf, in the
+                // back room, in a box on the floor, or in someone's arms.
+                int have = shelf.OnShelf + inStorage + onFloor + inHand;
+
+                // Fill the shelves, or hold the minimum, whichever asks for more.
+                int target = Mathf.Max(shelf.Capacity, minimum);
+
+                int shortfall = target - have;
+                if (shortfall <= 0) continue;
 
                 int perBox = listing.productsData[id].maxItemsPerBox;
                 if (perBox <= 0) continue;
 
-                // +1 guarantees the leftover, including when open space divides exactly.
-                int boxes = (open / perBox) + 1;
+                // +1 guarantees the leftover, including when the shortfall divides exactly.
+                int boxes = (shortfall / perBox) + 1;
 
                 // Subtract what is already on the order, which is what makes pressing twice a
                 // no-op rather than a double order.
@@ -272,7 +303,11 @@ namespace SupermarketTweaks
                 boxes -= already;
                 if (boxes <= 0) continue;
 
-                needs.Add(new Need { ProductID = id, Boxes = boxes, OpenSpace = open, PerBox = perBox });
+                needs.Add(new Need
+                {
+                    ProductID = id, Boxes = boxes, Target = target,
+                    Have = have, Shortfall = shortfall, PerBox = perBox,
+                });
             }
 
             return needs;
@@ -320,9 +355,9 @@ namespace SupermarketTweaks
                         total += boxPrice;
                     }
 
-                    sb.AppendLine($"    product {need.ProductID}: {need.Boxes} box(es) of {need.PerBox} " +
-                                  $"-> fills {need.OpenSpace} empty slot(s), " +
-                                  $"{need.Boxes * need.PerBox - need.OpenSpace} left for storage");
+                    sb.AppendLine($"    product {need.ProductID}: have {need.Have}, target {need.Target} " +
+                                  $"-> short {need.Shortfall}; {need.Boxes} box(es) of {need.PerBox}, " +
+                                  $"{need.Boxes * need.PerBox - need.Shortfall} left over");
                 }
 
                 LastResult = $"{needs.Count} product(s), {boxes} box(es), ${total:0.00}";
