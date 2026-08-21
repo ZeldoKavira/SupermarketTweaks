@@ -36,6 +36,7 @@ namespace SupermarketTweaks
         internal static ConfigEntry<bool> StorageFallback;
         internal static ConfigEntry<bool> SecurityHelps;
         internal static ConfigEntry<bool> TechHelps;
+        internal static ConfigEntry<bool> TechHaulsBales;
         internal static ConfigEntry<bool> OrderingHelps;
         internal static ConfigEntry<float> IdleSeconds;
         internal static ConfigEntry<bool> Log;
@@ -53,8 +54,12 @@ namespace SupermarketTweaks
                 "security when it opens - same rule as the cashiers, since there is nobody left " +
                 "to steal from either.");
             TechHelps = cfg.Bind("Staff", "TechHelpsRestock", true,
-                "Technicians switch to restocking whenever nothing is broken, at any hour, and " +
-                "back the moment something breaks.");
+                "Technicians switch to storage or restocking whenever they have nothing to do, and " +
+                "back the moment work appears.");
+            TechHaulsBales = cfg.Bind("Staff", "TechCountsBalesAsWork", true,
+                "Count waiting cardboard bales as technician work, so they are not lent out with " +
+                "bales stacking up. Hauling a bale pays 18x the recycle factor against 1.5x for a " +
+                "loose box, and one bale is ten boxes, so it is the better job to leave them on.");
             OrderingHelps = cfg.Bind("Staff", "OrderingHelpsRestock", true,
                 "Order fillers switch to storage or restocking whenever the packaging queue is " +
                 "empty, and back the moment an order comes in. Anyone halfway through packing an " +
@@ -127,6 +132,32 @@ namespace SupermarketTweaks
         // may be found as either a storage worker or a restocker, and the "put them back" checks
         // have to recognise both.
         internal static bool IsHelperRole(int role) => role == Storage || role == Restocker;
+
+        // Cardboard bales waiting to be hauled away.
+        //
+        // Baling is the technician's OTHER job, and the more lucrative one. NPC_Manager case 5
+        // state 0 asks GetFurnitureToFix first and falls through to state 10 when nothing is
+        // broken, which is where it looks for a bale - so "nothing is broken" was never the same
+        // thing as "no work", and lending technicians out on that test alone left bales stacking up
+        // in the back room.
+        //
+        // Worth what it costs to check: a bale pays 18 * boxRecycleFactor against 1.5 for a single
+        // loose box, and one bale is ten boxes - so it is better money for a tenth of the walking.
+        //
+        // Read from the same place GetClosestBale reads: levelPropsOBJ child 9 is the bale parent.
+        internal static int BalesWaiting()
+        {
+            try
+            {
+                var data = GameData.Instance;
+                var spawner = data != null ? data.GetComponent<NetworkSpawner>() : null;
+                var props = spawner != null ? spawner.levelPropsOBJ : null;
+                if (props == null || props.transform.childCount <= 9) return 0;
+
+                return props.transform.GetChild(9).childCount;
+            }
+            catch { return 0; }
+        }
 
         // What each employee was doing before we moved them, so they can be put back rather than
         // being assumed to have started as a cashier.
@@ -272,6 +303,7 @@ namespace SupermarketTweaks
         private float _boxesEmptySince = -1f;
         private float _boxesPresentSince = -1f;
         private float _ordersEmptySince = -1f;
+        private float _techIdleSince = -1f;
         private bool _wasOpen;
         private bool _knowOpen;
 
@@ -409,17 +441,32 @@ namespace SupermarketTweaks
             }
         }
 
-        // Technicians restock while nothing is broken.
+        // Technicians help out only when nothing is broken AND no bales are waiting.
         //
-        // brokenFurnitureList is the technician's entire work queue - GetFurnitureToFix reads it and
-        // nothing else - so an empty list means there is literally no repair work in existence, at
-        // any hour. Unlike the storage rule this needs no debounce in either direction: breakages
-        // are discrete events, not a value hovering around zero.
+        // Repairs are one half of the job; hauling cardboard bales to the recycler is the other,
+        // and it is the half that pays. Testing brokenFurnitureList alone treated a technician with
+        // a back room full of bales as idle, and lent them away from better-paid work.
+        //
+        // This one direction is debounced, unlike the original rule. Breakages are discrete events
+        // and needed no delay, but bales are produced continuously - a baler emits one every ten
+        // boxes - so the idle condition now flickers every time a technician clears the last bale
+        // and the next one forms. Going back is still immediate: work appearing is a real event.
         private void HandleTech(NPC_Manager mgr)
         {
             if (!StaffRolesConfig.TechHelps.Value) return;
 
             bool anythingBroken = mgr.brokenFurnitureList != null && mgr.brokenFurnitureList.Count > 0;
+            int bales = StaffRolesConfig.TechHaulsBales.Value ? StaffRoles.BalesWaiting() : 0;
+            bool anyWork = anythingBroken || bales > 0;
+
+            float now = Time.unscaledTime;
+            float delay = Mathf.Max(1f, StaffRolesConfig.IdleSeconds.Value);
+
+            if (anyWork) _techIdleSince = -1f;
+            else if (_techIdleSince < 0f) _techIdleSince = now;
+
+            bool quietLongEnough = !anyWork && _techIdleSince > 0f && now - _techIdleSince >= delay;
+
             var cashiers = StaffRolesConfig.CashierList();
 
             for (int i = 0; i < mgr.employeesArray.Length; i++)
@@ -429,18 +476,20 @@ namespace SupermarketTweaks
 
                 int role = StaffRoles.RoleOf(mgr, i);
 
-                if (role == StaffRoles.Technician && !anythingBroken)
+                if (role == StaffRoles.Technician && quietLongEnough)
                 {
                     StaffRoles.Remember(mgr, i, StaffRoles.Technician);
-                    StaffRoles.SetRole(mgr, i, StaffRoles.HelperRole(mgr), "nothing is broken");
+                    StaffRoles.SetRole(mgr, i, StaffRoles.HelperRole(mgr),
+                                       "nothing broken and no bales waiting");
                 }
-                else if (StaffRoles.IsHelperRole(role) && anythingBroken
+                else if (StaffRoles.IsHelperRole(role) && anyWork
                          && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Technician)
                 {
-                    StaffRoles.SetRole(mgr, i, StaffRoles.Technician,
-                                       $"{mgr.brokenFurnitureList.Count} thing(s) broken");
+                    StaffRoles.SetRole(mgr, i, StaffRoles.Technician, anythingBroken
+                        ? $"{mgr.brokenFurnitureList.Count} thing(s) broken"
+                        : $"{bales} bale(s) waiting");
                 }
-                else if (StaffRoles.IsHelperRole(role) && !anythingBroken
+                else if (StaffRoles.IsHelperRole(role) && !anyWork
                          && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Technician)
                 {
                     int want = StaffRoles.HelperRole(mgr);
