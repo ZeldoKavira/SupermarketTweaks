@@ -66,6 +66,10 @@ namespace SupermarketTweaks
                                 ? "   |   <b>this machine prices automatically</b>"
                                 : "   |   the host prices automatically; these settings come from them"), Rich());
 
+            // The packaging employee fails silently in game - case 6 sends them to the rest spot
+            // without a word when any of its four gates is shut - so the reason belongs on screen.
+            GUILayout.Label($"   orders: {StaffRoles.OrdersStatus}", Rich());
+
             // Manual sweeps stay available to a client on purpose - CmdUpdateProductPrice accepts
             // them, and it is useful to be able to force one without asking the host.
             GUILayout.Label($"   sales: {AutoSales.Status}   |   theft: {AntiTheft.Status}", Rich());

@@ -108,6 +108,7 @@ namespace SupermarketTweaks
         internal const int Ordering = 6;
 
         internal static string Status = "off";
+        internal static string OrdersStatus = "not checked yet";
 
         // Where a borrowed employee is most useful right now.
         //
@@ -518,17 +519,7 @@ namespace SupermarketTweaks
         {
             if (!StaffRolesConfig.OrderingHelps.Value) return;
 
-            bool anyOrders = false;
-            var packaging = OrderPackaging.Instance;
-            if (packaging != null && packaging.isOrderDepartmentActivated && packaging.ordersData != null)
-            {
-                foreach (var order in packaging.ordersData)
-                {
-                    if (string.IsNullOrEmpty(order)) continue;
-                    anyOrders = true;
-                    break;
-                }
-            }
+            bool anyOrders = Diagnose(mgr);
 
             float now = Time.unscaledTime;
             float delay = Mathf.Max(1f, StaffRolesConfig.IdleSeconds.Value);
@@ -573,6 +564,81 @@ namespace SupermarketTweaks
                 }
             }
         }
+
+        // Why the packer is standing still, in the words of the four things that can stop them.
+        //
+        // NPC_Manager case 6 state 0 checks all of these and, if ANY fails, silently sends them to
+        // state 10 - walk to the rest spot and wait. No message above their head, no log, nothing to
+        // look at. That silence is the whole reason this exists:
+        //
+        //   addonsBought[0]                          the order department was never bought
+        //   isOrderDepartmentActivated               it is shut - and it is shut EVERY new day
+        //                                            unless openAutomaticallyDepartment is set
+        //   RetrieveAnOrderPickupPoint(false)        no pickup point has been placed
+        //   RetrievePackagingFreeOrderIndex() >= 0   nothing in the queue yet
+        //
+        // Returns whether there is work, and leaves the reason in OrdersStatus either way.
+        private bool Diagnose(NPC_Manager mgr)
+        {
+            var data = GameData.Instance;
+            var upgrades = data != null ? data.GetComponent<UpgradesManager>() : null;
+            var packaging = OrderPackaging.Instance;
+
+            int packers = 0;
+            for (int i = 0; i < mgr.employeesArray.Length; i++)
+                if (StaffRoles.RoleOf(mgr, i) == StaffRoles.Ordering) packers++;
+
+            string reason;
+            bool anyOrders = false;
+
+            if (upgrades == null || upgrades.addonsBought == null || upgrades.addonsBought.Length == 0
+                || !upgrades.addonsBought[0])
+            {
+                reason = "the order department addon is not bought";
+            }
+            else if (packaging == null)
+            {
+                reason = "no OrderPackaging in the scene";
+            }
+            else if (!packaging.isOrderDepartmentActivated)
+            {
+                // Far and away the most likely answer, because it resets nightly.
+                reason = packaging.openAutomaticallyDepartment
+                    ? "the department is shut (auto-open is on, so it opens shortly after the day starts)"
+                    : "the department is SHUT - open it at the desk, or turn on auto-open so it " +
+                      "reopens itself; it closes every new day";
+            }
+            else if (mgr.orderPickupPointsList == null || mgr.orderPickupPointsList.Count == 0)
+            {
+                reason = "no order pickup point has been placed";
+            }
+            else
+            {
+                int queued = 0;
+                if (packaging.ordersData != null)
+                    foreach (var order in packaging.ordersData)
+                        if (!string.IsNullOrEmpty(order)) queued++;
+
+                anyOrders = queued > 0;
+                reason = anyOrders
+                    ? $"{queued} order(s) queued"
+                    : $"open with no orders yet ({packaging.numberOfAssignedOrders}/" +
+                      $"{packaging.maxNumberOfDailyOrders} today; the first cannot arrive before 09:00)";
+            }
+
+            string now = $"{packers} packer(s), {reason}";
+            if (now != OrdersStatusPrev)
+            {
+                OrdersStatusPrev = now;
+                StaffRoles.OrdersStatus = now;
+                if (StaffRolesConfig.Log.Value)
+                    Plugin.Log.LogInfo($"[Orders] {now}.");
+            }
+
+            return anyOrders;
+        }
+
+        private static string OrdersStatusPrev;
 
         // Halfway through packing an order, even though the queue looks empty.
         private static bool MidOrder(NPC_Manager mgr, int index)
