@@ -21,6 +21,10 @@ namespace SupermarketTweaks
     // ExtraProductsOnSaleToAdd, which is the only mechanism in the game that ADDS items to a
     // customer's shopping list. Re-applying is worth real money.
     //
+    // Two ways to decide what comes back. The default repeats yesterday's list; AutoSaleTopPriced
+    // instead fills every slot with the dearest products the shop can actually sell, on the grounds
+    // that a discount is worth most on the item with the most margin to give away.
+    //
     // What was on sale is captured in a prefix on DailySaleReset rather than polled, because by the
     // time anything else notices the day changed the lists are already gone.
     //
@@ -34,6 +38,8 @@ namespace SupermarketTweaks
         internal static ConfigEntry<string> Remembered;
         internal static ConfigEntry<float> DelaySeconds;
         internal static ConfigEntry<bool> Log;
+        internal static ConfigEntry<bool> TopPriced;
+        internal static ConfigEntry<int> TopPricedDiscount;
 
         public static void Init(ConfigFile cfg)
         {
@@ -47,6 +53,15 @@ namespace SupermarketTweaks
                 new ConfigDescription("How long after the new day starts to re-apply. A little delay " +
                     "lets the game finish its own end-of-day clearing first.",
                     new AcceptableValueRange<float>(0f, 60f)));
+            TopPriced = cfg.Bind("Sales", "AutoSaleTopPriced", false,
+                "Ignore the remembered list and instead put the most expensive products on sale " +
+                "each morning - as many as the shop has slots for. Filling every slot is what " +
+                "matters: an empty one is a wasted roll in ExtraProductsOnSaleToAdd, the only thing " +
+                "in the game that ADDS an item to a customer's shopping list.");
+            TopPricedDiscount = cfg.Bind("Sales", "TopPricedDiscount", 5,
+                new ConfigDescription("Discount to apply, as a percentage. The terminal only offers " +
+                    "multiples of 5 between 5 and 45, and this is clamped and rounded to match.",
+                    new AcceptableValueRange<int>(5, 45)));
             Log = cfg.Bind("Sales", "LogSales", true,
                 "Log what was remembered and what was restored.");
         }
@@ -61,6 +76,15 @@ namespace SupermarketTweaks
         internal static void Remember(List<int> ids, List<int> discounts)
         {
             if (ids == null || ids.Count == 0) return;
+
+            // In top-priced mode tomorrow's list is recomputed from prices, so writing today's
+            // choices over the remembered one would quietly destroy the list the player curated -
+            // and they would find it gone the moment they turned the mode back off.
+            if (AutoSalesConfig.TopPriced != null && AutoSalesConfig.TopPriced.Value)
+            {
+                Status = $"{ids.Count} sale(s) ended; top priced mode picks tomorrow's";
+                return;
+            }
 
             var parts = new List<string>();
             for (int i = 0; i < ids.Count; i++)
@@ -85,6 +109,61 @@ namespace SupermarketTweaks
                                    $"({ids.Count} sale(s), shop allows {cap}).");
         }
 
+        // The most expensive products the shop can actually sell, dearest first.
+        //
+        // Filtered to products that have a shelf row assigned, because a sale on something no
+        // customer can pick up is a slot spent for nothing - and slots are the scarce resource here,
+        // not discounts.
+        //
+        // Price comes from productPlayerPricing, which is what you charge, so this tracks whatever
+        // the auto-pricer last set rather than some fixed notion of value.
+        private static List<int> TopPricedProducts(ProductListing listing, int count)
+        {
+            var picks = new List<int>();
+            if (listing == null || listing.availableProducts == null || count <= 0) return picks;
+
+            var onShelves = new HashSet<int>();
+            var mgr = NPC_Manager.Instance;
+            if (mgr != null && mgr.shelvesOBJ != null)
+            {
+                foreach (Transform shelf in mgr.shelvesOBJ.transform)
+                {
+                    var data = shelf.GetComponent<Data_Container>();
+                    if (data == null || data.productInfoArray == null) continue;
+
+                    for (int j = 0; j < data.productInfoArray.Length / 2; j++)
+                    {
+                        int id = data.productInfoArray[j * 2];
+                        if (id >= 0) onShelves.Add(id);
+                    }
+                }
+            }
+
+            var candidates = new List<int>();
+            foreach (int id in listing.availableProducts)
+            {
+                if (id < 0 || id >= listing.productPlayerPricing.Length) continue;
+                if (onShelves.Count > 0 && !onShelves.Contains(id)) continue;
+                candidates.Add(id);
+            }
+
+            candidates.Sort((a, b) => listing.productPlayerPricing[b]
+                                      .CompareTo(listing.productPlayerPricing[a]));
+
+            for (int i = 0; i < candidates.Count && picks.Count < count; i++)
+                picks.Add(candidates[i]);
+
+            return picks;
+        }
+
+        // The terminal moves the discount in steps of five between 5 and 45, so anything else would
+        // be a value the player could never have set by hand.
+        private static int SnapDiscount(int raw)
+        {
+            int snapped = Mathf.RoundToInt(raw / 5f) * 5;
+            return Mathf.Clamp(snapped, 5, 45);
+        }
+
         internal static IEnumerator RestoreRoutine()
         {
             yield return new WaitForSeconds(Mathf.Max(0f, AutoSalesConfig.DelaySeconds.Value));
@@ -92,17 +171,41 @@ namespace SupermarketTweaks
             var listing = ProductListing.Instance;
             if (listing == null) yield break;
 
-            string raw = AutoSalesConfig.Remembered.Value;
-            if (string.IsNullOrEmpty(raw)) { Status = "nothing remembered"; yield break; }
-
             int cap = listing.allowedSimultaneousSales;
             int restored = 0, skipped = 0, refused = 0;
 
-            foreach (var pair in raw.Split(','))
+            // Either mode ends up as the same id:discount list, so the loop below is shared. Only
+            // where the list comes from differs.
+            var plan = new List<KeyValuePair<int, int>>();
+
+            if (AutoSalesConfig.TopPriced.Value)
             {
-                var kv = pair.Split(':');
-                if (kv.Length != 2) continue;
-                if (!int.TryParse(kv[0], out int id) || !int.TryParse(kv[1], out int discount)) continue;
+                int discount = SnapDiscount(AutoSalesConfig.TopPricedDiscount.Value);
+
+                // Exactly as many as the shop can hold. Asking for more would just be refused by
+                // SetProductOnSale, and asking for fewer wastes a slot.
+                foreach (int id in TopPricedProducts(listing, cap))
+                    plan.Add(new KeyValuePair<int, int>(id, discount));
+
+                if (plan.Count == 0) { Status = "no sellable products to discount"; yield break; }
+            }
+            else
+            {
+                string raw = AutoSalesConfig.Remembered.Value;
+                if (string.IsNullOrEmpty(raw)) { Status = "nothing remembered"; yield break; }
+
+                foreach (var pair in raw.Split(','))
+                {
+                    var kv = pair.Split(':');
+                    if (kv.Length != 2) continue;
+                    if (!int.TryParse(kv[0], out int rid) || !int.TryParse(kv[1], out int rdiscount)) continue;
+                    plan.Add(new KeyValuePair<int, int>(rid, rdiscount));
+                }
+            }
+
+            foreach (var entry in plan)
+            {
+                int id = entry.Key, discount = entry.Value;
 
                 // A product can be unlearned between sessions; putting an unavailable one on sale
                 // would burn a slot on something no customer can be offered.
@@ -127,7 +230,8 @@ namespace SupermarketTweaks
                 else refused++;
             }
 
-            Status = $"restored {restored} of {cap} slot(s)"
+            Status = (AutoSalesConfig.TopPriced.Value ? "top priced: " : "restored ")
+                   + $"{restored} of {cap} slot(s)"
                    + (skipped > 0 ? $", {skipped} unavailable" : "")
                    + (refused > 0 ? $", {refused} refused" : "");
 

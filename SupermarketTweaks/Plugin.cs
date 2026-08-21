@@ -32,6 +32,7 @@ namespace SupermarketTweaks
             ShelflessBoxConfig.Init(Config);
             AntiTheftConfig.Init(Config);
             AutoSalesConfig.Init(Config);
+            SeasonalEventsConfig.Init(Config);
             StaffRolesConfig.Init(Config);
             NetSyncConfig.Init(Config);
             PlacementOverlapConfig.Init(Config);
