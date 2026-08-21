@@ -32,7 +32,11 @@ BepInEx 5 mod for **Supermarket Together**.
   assigned. `MainRestockUpdate` only builds tasks from rows that already name a product
   (`if (num2 < 0) continue;`), so such a box can never be restocked; storing it just clogs the back
   room. Left on the floor it also shows you which product still needs a shelf.
-- **In-game config** — F1. F5 toggles the speed boost.
+- **Walk through blocking props** — `World/DisablePropCollision` turns off collision on objects
+  matching a name filter (default `Elephant`), for props that physically block somewhere you want
+  to reach. Colliders only, never the object itself, and purely local — nothing is networked. F11
+  lists what matches so you can correct the filter without a rebuild.
+- **In-game config** — F1. F5 toggles the speed boost. F10 dumps easter-egg chat phrases.
 
 ## Multiplayer
 
