@@ -34,6 +34,7 @@ namespace SupermarketTweaks
             AutoSalesConfig.Init(Config);
             StaffRolesConfig.Init(Config);
             NetSyncConfig.Init(Config);
+            PlacementOverlapConfig.Init(Config);
             UIDumpConfig.Init(Config);
             RestockOrderConfig.Init(Config);
             NoClipPropsConfig.Init(Config);
@@ -54,6 +55,7 @@ namespace SupermarketTweaks
             go.AddComponent<NoClipPropsDriver>();
             go.AddComponent<RestockOrderDriver>();
             go.AddComponent<UIDumper>();
+            go.AddComponent<PlacementOverlapDriver>();
             go.AddComponent<SettingsWindow>();
 
             ForwardUnityErrors();

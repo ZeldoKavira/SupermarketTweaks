@@ -41,6 +41,10 @@ BepInEx 5 mod for **Supermarket Together**.
   storage, ordering `floor(openShelfSpace / maxItemsPerBox) + 1` boxes each so the shelves fill
   *and* at least one unit is left over for the back room. Products with no shelf row are skipped.
   F8, or the button shown while the ordering terminal is open.
+- **Flush-snapped items place properly** — `Building/OverlapTolerance` shrinks the placement
+  ghost's collision slightly so grid-snapped neighbours sharing an edge stop blocking each other,
+  while real overlaps still do. `Building/DisableOverlapCheck` removes the check entirely if that
+  isn't enough.
 - **In-game config** — F1. F5 toggles the speed boost. F10 dumps easter-egg chat phrases.
 
 ## Multiplayer
