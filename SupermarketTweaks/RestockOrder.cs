@@ -23,6 +23,12 @@ namespace SupermarketTweaks
     //
     // The +1 is unconditional and that is the point - it is what guarantees the leftover, including
     // when the space divides exactly by the box size.
+    //
+    // What counts as "already have"
+    // -----------------------------
+    // Storage stock, boxes still sitting on the floor from a delivery, and boxes already in the
+    // order cart. Counting only storage made pressing twice order everything twice: ordering moves
+    // nothing into storage, so the second press saw the same empty shop and the same need.
     public static class RestockOrderConfig
     {
         internal static ConfigEntry<bool> Enabled;
@@ -86,6 +92,51 @@ namespace SupermarketTweaks
             return counts;
         }
 
+        // Boxes already sitting in the order cart, by product.
+        //
+        // The cart is one UI child per box, each tagged with its product id. Ignoring it was the
+        // bug: ordering changes neither storage nor shelf space, so a second press recalculated the
+        // identical need and added the whole order again.
+        private static Dictionary<int, int> CartBoxes(ManagerBlackboard blackboard)
+        {
+            var counts = new Dictionary<int, int>();
+            var parent = blackboard != null ? blackboard.shoppingListParent : null;
+            if (parent == null) return counts;
+
+            foreach (Transform entry in parent.transform)
+            {
+                var data = entry.GetComponent<InteractableData>();
+                if (data == null) continue;
+
+                int id = data.thisSkillIndex;
+                int prev;
+                counts[id] = counts.TryGetValue(id, out prev) ? prev + 1 : 1;
+            }
+            return counts;
+        }
+
+        // Units in boxes already delivered and sitting on the floor.
+        //
+        // These count as incoming too. A delivery lands on the floor, not in storage, so between
+        // the van arriving and a storage worker putting it away the product still reads as zero
+        // stock - and pressing again would order a second delivery for something already here.
+        private static Dictionary<int, int> FloorBoxUnits(NPC_Manager mgr)
+        {
+            var counts = new Dictionary<int, int>();
+            if (mgr.boxesOBJ == null) return counts;
+
+            foreach (Transform box in mgr.boxesOBJ.transform)
+            {
+                var data = box.GetComponent<BoxData>();
+                if (data == null || data.productID < 0 || data.numberOfProducts <= 0) continue;
+
+                int prev;
+                counts[data.productID] = counts.TryGetValue(data.productID, out prev)
+                    ? prev + data.numberOfProducts : data.numberOfProducts;
+            }
+            return counts;
+        }
+
         // Empty slots per product across every row assigned to it.
         private static Dictionary<int, int> OpenShelfSpace(NPC_Manager mgr)
         {
@@ -114,7 +165,7 @@ namespace SupermarketTweaks
             return space;
         }
 
-        private static List<Need> Calculate(out int skippedNoShelf)
+        private static List<Need> Calculate(ManagerBlackboard blackboard, out int skippedNoShelf)
         {
             skippedNoShelf = 0;
             var needs = new List<Need>();
@@ -125,12 +176,19 @@ namespace SupermarketTweaks
 
             var storage = StorageCounts(mgr);
             var space = OpenShelfSpace(mgr);
+            var cart = CartBoxes(blackboard);
+            var floor = FloorBoxUnits(mgr);
 
             foreach (int id in listing.availableProducts)
             {
                 int inStorage;
                 storage.TryGetValue(id, out inStorage);
-                if (inStorage > 0) continue;                    // still has back-room stock
+
+                int onFloor;
+                floor.TryGetValue(id, out onFloor);
+
+                // Anything already delivered counts, wherever it is standing.
+                if (inStorage + onFloor > 0) continue;
 
                 int open;
                 bool hasShelf = space.TryGetValue(id, out open);
@@ -148,6 +206,13 @@ namespace SupermarketTweaks
 
                 // +1 guarantees the leftover, including when open space divides exactly.
                 int boxes = (open / perBox) + 1;
+
+                // Subtract what is already on the order, which is what makes pressing twice a
+                // no-op rather than a double order.
+                int already;
+                cart.TryGetValue(id, out already);
+                boxes -= already;
+                if (boxes <= 0) continue;
 
                 needs.Add(new Need { ProductID = id, Boxes = boxes, OpenSpace = open, PerBox = perBox });
             }
@@ -169,13 +234,13 @@ namespace SupermarketTweaks
                 }
 
                 int skipped;
-                var needs = Calculate(out skipped);
+                var needs = Calculate(blackboard, out skipped);
 
                 if (needs.Count == 0)
                 {
                     LastResult = skipped > 0
-                        ? $"nothing to order ({skipped} out of stock but shelfless)"
-                        : "nothing out of stock";
+                        ? $"nothing to add ({skipped} out of stock but shelfless)"
+                        : "nothing to add - already stocked or on the order";
                     Plugin.Log.LogInfo($"[Order] {LastResult}.");
                     return;
                 }
