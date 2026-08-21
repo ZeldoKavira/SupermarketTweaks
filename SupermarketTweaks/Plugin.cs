@@ -34,6 +34,7 @@ namespace SupermarketTweaks
             AutoSalesConfig.Init(Config);
             StaffRolesConfig.Init(Config);
             NetSyncConfig.Init(Config);
+            EasterDumpConfig.Init(Config);
             SettingsWindow.Init(Config);
 
             ApplyPatches();
@@ -46,8 +47,10 @@ namespace SupermarketTweaks
             go.AddComponent<ThiefWatchDriver>();
             go.AddComponent<StaffRolesDriver>();
             go.AddComponent<NetSyncDriver>();
+            go.AddComponent<EasterDumper>();
             go.AddComponent<SettingsWindow>();
 
+            ForwardUnityErrors();
             WatchConfigFile();
             Log.LogInfo("Supermarket Tweaks loaded.");
         }
@@ -69,6 +72,39 @@ namespace SupermarketTweaks
             }
 
             Log.LogInfo($"{ok} patch class(es) applied{(failed > 0 ? $", {failed} FAILED" : "")}.");
+        }
+
+        // Forward Unity's own errors into the BepInEx log.
+        //
+        // This log opens with "Unable to start Unity log writer", so BepInEx captured none of
+        // Unity's output - and that blindness cost real time: Mirror was reporting
+        // "No writer found for SmtMessage" on every send, and neither side could see it. Anything
+        // the engine complains about should be visible where we are already looking.
+        //
+        // Errors and exceptions only; forwarding every Debug.Log would drown the log in the game's
+        // own chatter.
+        private void ForwardUnityErrors()
+        {
+            try
+            {
+                Application.logMessageReceived += (condition, stackTrace, type) =>
+                {
+                    if (type != LogType.Error && type != LogType.Exception && type != LogType.Assert) return;
+
+                    // Only what looks like ours or Mirror's, otherwise this becomes the game's
+                    // error log rather than the mod's.
+                    if (condition == null) return;
+                    if (condition.IndexOf("Mirror", StringComparison.OrdinalIgnoreCase) < 0 &&
+                        condition.IndexOf("Smt", StringComparison.Ordinal) < 0 &&
+                        condition.IndexOf("SupermarketTweaks", StringComparison.Ordinal) < 0 &&
+                        condition.IndexOf("No writer found", StringComparison.OrdinalIgnoreCase) < 0 &&
+                        condition.IndexOf("No reader found", StringComparison.OrdinalIgnoreCase) < 0)
+                        return;
+
+                    Log.LogWarning($"[Unity/{type}] {condition}");
+                };
+            }
+            catch (Exception e) { Log.LogWarning($"Could not hook Unity's log: {e.Message}"); }
         }
 
         // BepInEx re-reads the file on its own only for entries you never touch in code, so editing

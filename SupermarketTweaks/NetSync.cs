@@ -86,6 +86,7 @@ namespace SupermarketTweaks
         {
             try
             {
+                EnsureSerializers();
                 if (NetSyncConfig.Tolerant != null && NetSyncConfig.Tolerant.Value) MakeTolerant();
 
                 // Registered before anything else can return early. This used to sit behind a
@@ -144,6 +145,45 @@ namespace SupermarketTweaks
                 }
             }
             catch (Exception e) { Plugin.Log.LogError($"[NetSync] {e.Message}"); }
+        }
+
+        // Teach Mirror how to put SmtMessage on the wire.
+        //
+        // This is the piece whose absence broke everything, and it fails silently. Mirror's Weaver
+        // generates a Writer<T>.write and Reader<T>.read for every NetworkMessage at COMPILE time -
+        // but a BepInEx plugin is never weaved, so for our struct both fields are null:
+        //
+        //   Action<NetworkWriter, T> write = Writer<T>.write;   // null
+        //   if (write == null) Debug.LogError($"No writer found for {typeof(T)}...");
+        //
+        // The message then goes out as a bare 2-byte id with no payload, the far side cannot read
+        // it, and the only complaint is a Unity Debug.LogError - which BepInEx never captured here
+        // ("Unable to start Unity log writer"). Hence: client sending happily, host receiving
+        // nothing, and not one error on either side.
+        //
+        // Both fields are public statics, so they can simply be filled in. The order of writes must
+        // match the order of reads exactly; there is no length prefix to save us.
+        private static bool _serializersDone;
+
+        private static void EnsureSerializers()
+        {
+            if (_serializersDone) return;
+            _serializersDone = true;
+
+            Writer<SmtMessage>.write = (writer, msg) =>
+            {
+                writer.WriteString(msg.Kind ?? "");
+                writer.WriteString(msg.Payload ?? "");
+            };
+
+            Reader<SmtMessage>.read = reader => new SmtMessage
+            {
+                Kind = reader.ReadString(),
+                Payload = reader.ReadString(),
+            };
+
+            Plugin.Log.LogInfo("[NetSync] Registered SmtMessage serializers (the mod is not weaved, " +
+                               "so Mirror has none of its own).");
         }
 
         // Only protects US. A vanilla player still disconnects on our packets, which is exactly why
