@@ -641,18 +641,32 @@ namespace SupermarketTweaks
         private static string OrdersStatusPrev;
 
         // Halfway through packing an order, even though the queue looks empty.
+        //
+        // Only two of the four packaging fields are safe to read, and picking the wrong ones
+        // wedged this rule shut: NOTHING clears packagingAssignedOrderData or
+        // packagingPackedOrderProducts when an order completes. State 5 deposits the box and goes
+        // straight back to state 0 - the packed list is only emptied at the START of the next order
+        // (case 6 state 1), and the order string is only ever overwritten. So after the very first
+        // order both stay populated forever, and testing them meant the packer was permanently
+        // "mid-order" and never lent out again.
+        //
+        // equippedItem is the honest signal, and it happens to bracket the job exactly: state 1
+        // calls EquipNPCItem(3) on taking the order, state 5 calls UnequipBox on depositing it.
+        // It is also the game's own test for this hazard - case 6 state 0 opens with
+        // "if (equippedItem > 0) { DropBoxOnGround; UnequipBox; }", which is precisely the box on
+        // the floor we are trying not to cause.
+        //
+        // packagingAssignedOrderProducts is kept as a second check because it genuinely drains to
+        // zero, one RemoveAt(0) per item fetched.
         private static bool MidOrder(NPC_Manager mgr, int index)
         {
             var info = StaffRoles.InfoOf(mgr, index);
             if (info == null) return false;
 
             if (info.equippedItem > 0) return true;
-            if (info.packagingAssignedOrderProducts != null
-                && info.packagingAssignedOrderProducts.Count > 0) return true;
-            if (info.packagingPackedOrderProducts != null
-                && info.packagingPackedOrderProducts.Count > 0) return true;
 
-            return !string.IsNullOrEmpty(info.packagingAssignedOrderData);
+            return info.packagingAssignedOrderProducts != null
+                && info.packagingAssignedOrderProducts.Count > 0;
         }
 
         // Storage staff restock when there is nothing to put away.
