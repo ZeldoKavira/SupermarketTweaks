@@ -38,6 +38,7 @@ namespace SupermarketTweaks
         internal static ConfigEntry<bool> TechHelps;
         internal static ConfigEntry<bool> TechHaulsBales;
         internal static ConfigEntry<bool> OrderingHelps;
+        internal static ConfigEntry<bool> ManufacturingHelps;
         internal static ConfigEntry<float> IdleSeconds;
         internal static ConfigEntry<bool> Log;
         internal static ConfigEntry<string> RememberedRoles;
@@ -64,6 +65,10 @@ namespace SupermarketTweaks
                 "Order fillers switch to storage or restocking whenever the packaging queue is " +
                 "empty, and back the moment an order comes in. Anyone halfway through packing an " +
                 "order is left alone.");
+            ManufacturingHelps = cfg.Bind("Staff", "ManufacturingHelpsRestock", true,
+                "Manufacturing staff switch to storage or restocking when there is nothing queued " +
+                "to make, no manufactured boxes on the floor, and no manufactured shelf a rack " +
+                "could fill - all three, because all three are their job.");
             StorageFallback = cfg.Bind("Staff", "StorageHelpsRestock", true,
                 "Storage staff switch to restocking whenever there are no boxes on the floor, and " +
                 "switch back as soon as a delivery lands.");
@@ -106,6 +111,7 @@ namespace SupermarketTweaks
         internal const int Security = 4;
         internal const int Technician = 5;
         internal const int Ordering = 6;
+        internal const int Manufacturing = 7;
 
         internal static string Status = "off";
         internal static string OrdersStatus = "not checked yet";
@@ -305,6 +311,7 @@ namespace SupermarketTweaks
         private float _boxesPresentSince = -1f;
         private float _ordersEmptySince = -1f;
         private float _techIdleSince = -1f;
+        private float _mfgIdleSince = -1f;
         private bool _wasOpen;
         private bool _knowOpen;
 
@@ -334,6 +341,7 @@ namespace SupermarketTweaks
                 HandleSecurity(mgr, data);
                 HandleTech(mgr);
                 HandleOrdering(mgr);
+                HandleManufacturing(mgr);
             }
             catch (Exception e) { Plugin.Log.LogError($"[Staff] {e.Message}"); }
         }
@@ -639,6 +647,87 @@ namespace SupermarketTweaks
         }
 
         private static string OrdersStatusPrev;
+
+        // Manufacturing staff help out when all three of their jobs are empty.
+        //
+        // Case 7 state 0 rotates through three kinds of work and only rests when every one comes
+        // back empty:
+        //
+        //   GetManufacturingProducerWithQueue     a machine with something to make
+        //   GetRandomGroundManufacturingBox       a manufactured box to put away
+        //   ReturnWeightedManufacturerTask        a manufactured shelf a rack could fill
+        //
+        // Testing only the production queue would have repeated the technician mistake exactly -
+        // lending away someone whose other two jobs were stacked up. The whole block is also
+        // wrapped in addonsBought[1], so without the manufacturing addon they can never have work
+        // and helping out is the only sensible thing for them to do.
+        private void HandleManufacturing(NPC_Manager mgr)
+        {
+            if (!StaffRolesConfig.ManufacturingHelps.Value) return;
+
+            bool anyWork;
+            try
+            {
+                anyWork = ManufactureOrder.ProductionPending()
+                          || (mgr.manufacturingBoxesOBJ != null
+                              && mgr.manufacturingBoxesOBJ.transform.childCount > 0)
+                          || ManufactureOrder.RestockPending(mgr);
+            }
+            catch (Exception e)
+            {
+                // Never strand someone on a bad read - assume they are busy and leave them be.
+                Plugin.Log.LogError($"[Staff] manufacturing check: {e.Message}");
+                return;
+            }
+
+            float now = Time.unscaledTime;
+            float delay = Mathf.Max(1f, StaffRolesConfig.IdleSeconds.Value);
+
+            if (anyWork) _mfgIdleSince = -1f;
+            else if (_mfgIdleSince < 0f) _mfgIdleSince = now;
+
+            bool quietLongEnough = !anyWork && _mfgIdleSince > 0f && now - _mfgIdleSince >= delay;
+
+            var cashiers = StaffRolesConfig.CashierList();
+
+            for (int i = 0; i < mgr.employeesArray.Length; i++)
+            {
+                string name = StaffRoles.NameOf(mgr, i);
+                if (name == null || cashiers.Contains(name)) continue;
+
+                int role = StaffRoles.RoleOf(mgr, i);
+
+                if (role == StaffRoles.Manufacturing && quietLongEnough && !Carrying(mgr, i))
+                {
+                    StaffRoles.Remember(mgr, i, StaffRoles.Manufacturing);
+                    StaffRoles.SetRole(mgr, i, StaffRoles.HelperRole(mgr), "nothing to manufacture");
+                }
+                else if (StaffRoles.IsHelperRole(role) && anyWork
+                         && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Manufacturing)
+                {
+                    StaffRoles.SetRole(mgr, i, StaffRoles.Manufacturing, "manufacturing work waiting");
+                }
+                else if (StaffRoles.IsHelperRole(role) && !anyWork
+                         && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Manufacturing)
+                {
+                    int want = StaffRoles.HelperRole(mgr);
+                    if (role != want) StaffRoles.SetRole(mgr, i, want, "following the work");
+                }
+                else if (role == StaffRoles.Manufacturing
+                         && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Manufacturing)
+                {
+                    StaffRoles.Forget(mgr, i);
+                }
+            }
+        }
+
+        // Holding a box. Case 7 state 0 opens with "if (equippedItem > 0) { DropBoxOnGround;
+        // UnequipBox; }", so moving someone mid-carry leaves it on the floor.
+        private static bool Carrying(NPC_Manager mgr, int index)
+        {
+            var info = StaffRoles.InfoOf(mgr, index);
+            return info != null && info.equippedItem > 0;
+        }
 
         // Halfway through packing an order, even though the queue looks empty.
         //

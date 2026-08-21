@@ -124,8 +124,18 @@ namespace SupermarketTweaks
             }
         }
 
-        // Everything already made: the manufacturing storage racks, and boxes on the floor.
+        // Everything already made, wherever it is standing.
         private static Dictionary<Recipe, int> Stock(NPC_Manager mgr)
+        {
+            var counts = StorageStock(mgr);
+            FloorStock(mgr, counts);
+            return counts;
+        }
+
+        // What the manufacturing storage racks hold. Kept separate from the floor boxes because
+        // they feed different jobs: a restocker pulls from the racks, while a box on the floor is
+        // a put-away task.
+        private static Dictionary<Recipe, int> StorageStock(NPC_Manager mgr)
         {
             var counts = new Dictionary<Recipe, int>();
 
@@ -151,8 +161,13 @@ namespace SupermarketTweaks
                 }
             }
 
-            // Boxes waiting on the floor are stock too - the same lesson the ordering button
-            // learned by ordering replacements for a delivery that had already arrived.
+            return counts;
+        }
+
+        // Boxes waiting on the floor are stock too - the same lesson the ordering button learned by
+        // ordering replacements for a delivery that had already arrived.
+        private static void FloorStock(NPC_Manager mgr, Dictionary<Recipe, int> counts)
+        {
             if (mgr.manufacturingBoxesOBJ != null)
             {
                 foreach (Transform box in mgr.manufacturingBoxesOBJ.transform)
@@ -167,8 +182,6 @@ namespace SupermarketTweaks
                     }, d.numberOfProducts);
                 }
             }
-
-            return counts;
         }
 
         // Runs already queued on this machine, so a second press is a no-op rather than a second
@@ -188,6 +201,49 @@ namespace SupermarketTweaks
                 }, 1);
             }
             return counts;
+        }
+
+        // Would a manufacturing employee find restocking work right now?
+        //
+        // Approximates ReturnWeightedManufacturerTask, which is private: it moves stock from the
+        // storage racks onto a shelf row with room, so a row below capacity with matching stock
+        // behind it is exactly a job waiting. Matching means the (id, combination) PAIR - a rack
+        // full of the plain version cannot fill a row labelled for the combined one.
+        internal static bool RestockPending(NPC_Manager mgr)
+        {
+            if (mgr == null) return false;
+
+            var capacity = new Dictionary<Recipe, int>();
+            var onShelf = new Dictionary<Recipe, int>();
+            ShelfStats(mgr, capacity, onShelf);
+            if (capacity.Count == 0) return false;
+
+            var racks = StorageStock(mgr);
+            if (racks.Count == 0) return false;
+
+            foreach (var pair in capacity)
+            {
+                int have, stored;
+                onShelf.TryGetValue(pair.Key, out have);
+                if (have >= pair.Value) continue;               // row is full
+
+                racks.TryGetValue(pair.Key, out stored);
+                if (stored > 0) return true;
+            }
+            return false;
+        }
+
+        // Any machine with something still to make.
+        //
+        // The same test GetManufacturingProducerWithQueue uses, minus the assignedToEmployee half:
+        // a machine already being worked is still work, and excluding it would report "idle" for
+        // the one employee who is busiest. The queue entry survives production - Produce() only
+        // pops it at the end - so a worker mid-run keeps this true.
+        internal static bool ProductionPending()
+        {
+            foreach (var m in UnityEngine.Object.FindObjectsOfType<ManufacturingProduction>())
+                if (m != null && m.productQueue != null && m.productQueue.Count > 0) return true;
+            return false;
         }
 
         private static List<Need> Calculate(NPC_Manager mgr, ManufacturingProduction machine)
