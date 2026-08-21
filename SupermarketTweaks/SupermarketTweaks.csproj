@@ -28,6 +28,11 @@
     <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(Managed)\UnityEngine.PhysicsModule.dll</HintPath></Reference>
 
     <Reference Include="Mirror"><HintPath>$(Managed)\Mirror.dll</HintPath></Reference>
+
+    <!-- Needed to clone the game's own UI button: Button and Image live in UnityEngine.UI, and the
+         RectTransform/Canvas types they depend on live in UIModule. -->
+    <Reference Include="UnityEngine.UI"><HintPath>$(Managed)\UnityEngine.UI.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.UIModule"><HintPath>$(Managed)\UnityEngine.UIModule.dll</HintPath></Reference>
   </ItemGroup>
 
   <ItemGroup>

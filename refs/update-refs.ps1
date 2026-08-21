@@ -30,6 +30,8 @@ $needed = @(
     'UnityEngine.IMGUIModule'
     'UnityEngine.InputLegacyModule'
     'UnityEngine.PhysicsModule'
+    'UnityEngine.UI'
+    'UnityEngine.UIModule'
 )
 
 $managed = Join-Path $GameDir 'Supermarket Together_Data\Managed'

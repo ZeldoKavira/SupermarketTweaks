@@ -37,8 +37,10 @@ namespace SupermarketTweaks
                 "stock left in storage.");
             Key = cfg.Bind("Ordering", "QuickRestockKey", new KeyboardShortcut(KeyCode.F8),
                 "Fills the cart with everything out of stock in storage.");
-            ShowButton = cfg.Bind("Ordering", "ShowOrderButton", true,
-                "Draw the button on screen while the ordering terminal is open.");
+            ShowButton = cfg.Bind("Ordering", "ShowOrderButton", false,
+                "Draw a fallback overlay button while the terminal is open. Off by default now " +
+                "that a real button sits in the terminal's own UI - turn it on if that one fails " +
+                "to appear.");
             IncludeShelvedButEmpty = cfg.Bind("Ordering", "OnlyProductsWithShelves", true,
                 "Only order products that actually have a shelf row assigned. Ordering anything " +
                 "else just fills the back room with stock no worker can ever put out.");
