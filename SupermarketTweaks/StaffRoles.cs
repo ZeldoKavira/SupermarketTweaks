@@ -34,6 +34,7 @@ namespace SupermarketTweaks
         internal static ConfigEntry<bool> TechHelps;
         internal static ConfigEntry<float> IdleSeconds;
         internal static ConfigEntry<bool> Log;
+        internal static ConfigEntry<string> RememberedRoles;
 
         public static void Init(ConfigFile cfg)
         {
@@ -56,6 +57,10 @@ namespace SupermarketTweaks
                 new ConfigDescription("How long a condition must hold before anyone is moved. Stops " +
                     "staff flip-flopping as the last box is picked up and put down.",
                     new AcceptableValueRange<float>(1f, 120f)));
+            RememberedRoles = cfg.Bind("Staff", "RememberedRoles", "",
+                "Which job each auto-moved employee should be returned to, as name:role pairs. " +
+                "Written automatically; kept in the config so a restart cannot strand someone in " +
+                "a job they were only lent to.");
             Log = cfg.Bind("Staff", "LogRoleChanges", true,
                 "Log every automatic role change.");
         }
@@ -91,7 +96,55 @@ namespace SupermarketTweaks
 
         // What each employee was doing before we moved them, so they can be put back rather than
         // being assumed to have started as a cashier.
-        private static readonly Dictionary<int, int> _original = new Dictionary<int, int>();
+        //
+        // Keyed by NAME and written to the config, for two separate reasons:
+        //
+        //   durability  the map used to live only in memory, so quitting while someone was lent to
+        //               restocking stranded them there permanently - the note saying what they
+        //               really were died with the process.
+        //   correctness it used to be keyed by employeesArray index, and those shift when you hire
+        //               or fire. A departure could hand one employee's remembered role to whoever
+        //               slid into their slot.
+        //
+        // The cost is that two employees sharing a name share an entry. That is a far smaller
+        // problem than either of the above, and the game generates from a large name pool.
+        private static Dictionary<string, int> _original;
+
+        private static Dictionary<string, int> Original
+        {
+            get
+            {
+                if (_original != null) return _original;
+
+                _original = new Dictionary<string, int>();
+                var raw = StaffRolesConfig.RememberedRoles != null
+                    ? StaffRolesConfig.RememberedRoles.Value : "";
+                if (string.IsNullOrEmpty(raw)) return _original;
+
+                foreach (var pair in raw.Split(','))
+                {
+                    // Names can contain most things, so split on the LAST colon.
+                    int cut = pair.LastIndexOf(':');
+                    if (cut <= 0 || cut == pair.Length - 1) continue;
+
+                    string name = pair.Substring(0, cut).Trim();
+                    if (name.Length == 0) continue;
+
+                    int role;
+                    if (int.TryParse(pair.Substring(cut + 1), out role)) _original[name] = role;
+                }
+                return _original;
+            }
+        }
+
+        private static void Save()
+        {
+            if (StaffRolesConfig.RememberedRoles == null) return;
+
+            var parts = new List<string>();
+            foreach (var kv in Original) parts.Add(kv.Key + ":" + kv.Value);
+            StaffRolesConfig.RememberedRoles.Value = string.Join(",", parts.ToArray());
+        }
 
         internal static string NameOf(NPC_Manager mgr, int index)
         {
@@ -141,18 +194,32 @@ namespace SupermarketTweaks
             }
         }
 
-        internal static void Remember(int index, int role)
+        // The three accessors still take an index because that is what the callers have; the name
+        // is resolved here so no call site has to care.
+        internal static void Remember(NPC_Manager mgr, int index, int role)
         {
-            if (!_original.ContainsKey(index)) _original[index] = role;
+            string name = NameOf(mgr, index);
+            if (string.IsNullOrEmpty(name) || Original.ContainsKey(name)) return;
+
+            Original[name] = role;
+            Save();
         }
 
-        internal static int Recall(int index, int fallback)
+        internal static int Recall(NPC_Manager mgr, int index, int fallback)
         {
+            string name = NameOf(mgr, index);
+            if (string.IsNullOrEmpty(name)) return fallback;
+
             int r;
-            return _original.TryGetValue(index, out r) ? r : fallback;
+            return Original.TryGetValue(name, out r) ? r : fallback;
         }
 
-        internal static void Forget(int index) => _original.Remove(index);
+        internal static void Forget(NPC_Manager mgr, int index)
+        {
+            string name = NameOf(mgr, index);
+            if (string.IsNullOrEmpty(name) || !Original.Remove(name)) return;
+            Save();
+        }
     }
 
     public class StaffRolesDriver : MonoBehaviour
@@ -218,7 +285,7 @@ namespace SupermarketTweaks
                 if (open)
                 {
                     // Opening: back to the till.
-                    StaffRoles.Forget(i);
+                    StaffRoles.Forget(mgr, i);
                     StaffRoles.SetRole(mgr, i, StaffRoles.Cashier, "shop open");
                 }
                 else if (customersLeft == 0)
@@ -227,7 +294,7 @@ namespace SupermarketTweaks
                     // the doors stopped admitting people, and anyone already inside still has to
                     // queue and pay. Pulling the cashiers the moment the sign flips would strand
                     // them - and a customer who cannot find a free checkout turns thief outright.
-                    StaffRoles.Remember(i, role);
+                    StaffRoles.Remember(mgr, i, role);
                     StaffRoles.SetRole(mgr, i, StaffRoles.Restocker, "shop closed and empty");
                 }
             }
@@ -264,17 +331,17 @@ namespace SupermarketTweaks
 
                 if (role == StaffRoles.Security && !open && customersLeft == 0)
                 {
-                    StaffRoles.Remember(i, StaffRoles.Security);
+                    StaffRoles.Remember(mgr, i, StaffRoles.Security);
                     StaffRoles.SetRole(mgr, i, StaffRoles.Restocker, "shop closed and empty");
                 }
                 else if (role == StaffRoles.Restocker && open
-                         && StaffRoles.Recall(i, -1) == StaffRoles.Security)
+                         && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Security)
                 {
                     StaffRoles.SetRole(mgr, i, StaffRoles.Security, "shop open");
                 }
-                else if (role == StaffRoles.Security && StaffRoles.Recall(i, -1) == StaffRoles.Security)
+                else if (role == StaffRoles.Security && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Security)
                 {
-                    StaffRoles.Forget(i);      // observed back on duty
+                    StaffRoles.Forget(mgr, i);      // observed back on duty
                 }
             }
         }
@@ -301,18 +368,18 @@ namespace SupermarketTweaks
 
                 if (role == StaffRoles.Technician && !anythingBroken)
                 {
-                    StaffRoles.Remember(i, StaffRoles.Technician);
+                    StaffRoles.Remember(mgr, i, StaffRoles.Technician);
                     StaffRoles.SetRole(mgr, i, StaffRoles.Restocker, "nothing is broken");
                 }
                 else if (role == StaffRoles.Restocker && anythingBroken
-                         && StaffRoles.Recall(i, -1) == StaffRoles.Technician)
+                         && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Technician)
                 {
                     StaffRoles.SetRole(mgr, i, StaffRoles.Technician,
                                        $"{mgr.brokenFurnitureList.Count} thing(s) broken");
                 }
-                else if (role == StaffRoles.Technician && StaffRoles.Recall(i, -1) == StaffRoles.Technician)
+                else if (role == StaffRoles.Technician && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Technician)
                 {
-                    StaffRoles.Forget(i);
+                    StaffRoles.Forget(mgr, i);
                 }
             }
         }
@@ -358,11 +425,11 @@ namespace SupermarketTweaks
                 if (!anyBoxes && role == StaffRoles.Storage && _boxesEmptySince > 0f
                     && now - _boxesEmptySince >= delay)
                 {
-                    StaffRoles.Remember(i, StaffRoles.Storage);
+                    StaffRoles.Remember(mgr, i, StaffRoles.Storage);
                     StaffRoles.SetRole(mgr, i, StaffRoles.Restocker, "no boxes on the floor");
                 }
                 else if (anyBoxes && role == StaffRoles.Restocker
-                         && StaffRoles.Recall(i, -1) == StaffRoles.Storage)
+                         && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Storage)
                 {
                     // Going BACK is not debounced, unlike leaving.
                     //
@@ -378,11 +445,11 @@ namespace SupermarketTweaks
                     // before confirming used to do.
                     StaffRoles.SetRole(mgr, i, StaffRoles.Storage, "boxes waiting");
                 }
-                else if (role == StaffRoles.Storage && StaffRoles.Recall(i, -1) == StaffRoles.Storage)
+                else if (role == StaffRoles.Storage && StaffRoles.Recall(mgr, i, -1) == StaffRoles.Storage)
                 {
                     // Observed back in the job we moved them out of, so the note has served its
                     // purpose and can go.
-                    StaffRoles.Forget(i);
+                    StaffRoles.Forget(mgr, i);
                 }
             }
         }
