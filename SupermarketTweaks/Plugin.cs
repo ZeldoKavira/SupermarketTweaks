@@ -34,6 +34,7 @@ namespace SupermarketTweaks
             AutoSalesConfig.Init(Config);
             SeasonalEventsConfig.Init(Config);
             ResearchTrackerConfig.Init(Config);
+            ManufactureOrderConfig.Init(Config);
             StaffRolesConfig.Init(Config);
             NetSyncConfig.Init(Config);
             PlacementOverlapConfig.Init(Config);
@@ -57,6 +58,7 @@ namespace SupermarketTweaks
             go.AddComponent<EasterDumper>();
             go.AddComponent<NoClipPropsDriver>();
             go.AddComponent<RestockOrderDriver>();
+            go.AddComponent<ManufactureOrderDriver>();
             go.AddComponent<OrderButtonUI>();
             go.AddComponent<UIDumper>();
             go.AddComponent<PlacementOverlapDriver>();
