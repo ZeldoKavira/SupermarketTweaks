@@ -23,6 +23,11 @@ namespace SupermarketTweaks
     //
     // What was on sale is captured in a prefix on DailySaleReset rather than polled, because by the
     // time anything else notices the day changed the lists are already gone.
+    //
+    // How many can come back is not up to this mod. ProductListing.allowedSimultaneousSales starts
+    // at 1 and is raised only by upgrades 35, 36 and 37, +2 each, and both SalesDevice and
+    // SetProductOnSale refuse anything past it. One remembered sale in an un-upgraded shop is the
+    // correct answer, so the count is logged next to the cap to tell the two cases apart.
     public static class AutoSalesConfig
     {
         internal static ConfigEntry<bool> Enabled;
@@ -65,10 +70,19 @@ namespace SupermarketTweaks
             }
 
             AutoSalesConfig.Remembered.Value = string.Join(",", parts.ToArray());
-            Status = $"{ids.Count} sale(s) remembered";
+
+            // The cap is reported alongside the count because it is the usual explanation for a
+            // disappointing number here. allowedSimultaneousSales starts at 1 and only upgrades 35,
+            // 36 and 37 raise it, +2 each - so an un-upgraded shop can hold exactly one sale, and
+            // remembering one is the whole truth rather than a bug.
+            int cap = ProductListing.Instance != null
+                ? ProductListing.Instance.allowedSimultaneousSales : -1;
+
+            Status = $"{ids.Count} of {cap} slot(s) remembered";
 
             if (AutoSalesConfig.Log.Value)
-                Plugin.Log.LogInfo($"[Sales] Remembered for tomorrow: {AutoSalesConfig.Remembered.Value}");
+                Plugin.Log.LogInfo($"[Sales] Remembered for tomorrow: {AutoSalesConfig.Remembered.Value} " +
+                                   $"({ids.Count} sale(s), shop allows {cap}).");
         }
 
         internal static IEnumerator RestoreRoutine()
@@ -81,7 +95,8 @@ namespace SupermarketTweaks
             string raw = AutoSalesConfig.Remembered.Value;
             if (string.IsNullOrEmpty(raw)) { Status = "nothing remembered"; yield break; }
 
-            int restored = 0, skipped = 0;
+            int cap = listing.allowedSimultaneousSales;
+            int restored = 0, skipped = 0, refused = 0;
 
             foreach (var pair in raw.Split(','))
             {
@@ -101,14 +116,25 @@ namespace SupermarketTweaks
                 // so restoring more than the current cap allows simply stops rather than breaking -
                 // which matters if the upgrade that raised the cap has not been bought on this save.
                 listing.SetProductOnSale(id, discount);
-                restored++;
 
+                // A frame for the command to land. SetProductOnSale does not report back - it fires
+                // a Command and returns - so success is read from the list afterwards rather than
+                // assumed. Counting the calls instead of the results was reporting sales that the
+                // cap had silently refused.
                 yield return null;
+
+                if (listing.productsIDOnSale != null && listing.productsIDOnSale.Contains(id)) restored++;
+                else refused++;
             }
 
-            Status = $"restored {restored}" + (skipped > 0 ? $", {skipped} unavailable" : "");
-            if (AutoSalesConfig.Log.Value && (restored > 0 || skipped > 0))
-                Plugin.Log.LogInfo($"[Sales] {Status}.");
+            Status = $"restored {restored} of {cap} slot(s)"
+                   + (skipped > 0 ? $", {skipped} unavailable" : "")
+                   + (refused > 0 ? $", {refused} refused" : "");
+
+            if (AutoSalesConfig.Log.Value && (restored > 0 || skipped > 0 || refused > 0))
+                Plugin.Log.LogInfo($"[Sales] {Status}." + (refused > 0
+                    ? " Refused ones did not fit; allowedSimultaneousSales is raised by upgrades 35, 36 and 37."
+                    : ""));
         }
     }
 
