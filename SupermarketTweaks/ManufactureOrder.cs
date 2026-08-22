@@ -39,6 +39,7 @@ namespace SupermarketTweaks
         internal static ConfigEntry<KeyboardShortcut> Key;
         internal static ConfigEntry<bool> ShowButton;
         internal static ConfigEntry<int> MaxRuns;
+        internal static ConfigEntry<int> MinimumStock;
 
         public static void Init(ConfigFile cfg)
         {
@@ -51,10 +52,17 @@ namespace SupermarketTweaks
                 "Draw a fallback overlay button while a machine's interface is open. Off by " +
                 "default now that a real button sits in the machine's own panel - turn it on if " +
                 "that one fails to appear.");
+            MinimumStock = cfg.Bind("Manufacturing", "MinimumManufacturedStock", 0,
+                new ConfigDescription("Keep at least this many units of every manufactured product, " +
+                    "counting shelves, manufacturing storage and boxes on the floor. A floor on the " +
+                    "total, not a bonus on top, so a product whose shelves already hold more is " +
+                    "unaffected. 0 makes only enough to fill the shelves.",
+                    new AcceptableValueRange<int>(0, 2000)));
             MaxRuns = cfg.Bind("Manufacturing", "MaxQueuedRuns", 20,
-                new ConfigDescription("Never add more than this many runs in one press. Each run " +
-                    "consumes ingredients off your own shelves, so a full refill of an empty shop " +
-                    "can be an expensive thing to trigger by accident.",
+                new ConfigDescription("Longest queue any ONE machine may be left holding. Counted " +
+                    "per machine and against what it is already holding, so two machines can carry " +
+                    "twice as much - the point of the limit is that no single machine ends up with " +
+                    "an hour of work while its neighbour idles.",
                     new AcceptableValueRange<int>(1, 100)));
         }
 
@@ -186,23 +194,50 @@ namespace SupermarketTweaks
             }
         }
 
-        // Runs already queued on this machine, so a second press is a no-op rather than a second
-        // helping - exactly the bug the ordering button had before the cart was counted.
-        private static Dictionary<Recipe, int> Queued(ManufacturingProduction machine)
+        // Runs already queued, across EVERY machine.
+        //
+        // A run satisfies the shelf wherever it happens to be queued, so counting only the machine
+        // in front of you would order a second batch of everything the moment you walked to the
+        // other one - the same double-ordering the cart subtraction fixed for deliveries.
+        private static Dictionary<Recipe, int> Queued(List<ManufacturingProduction> machines)
         {
             var counts = new Dictionary<Recipe, int>();
-            if (machine == null || machine.productQueue == null) return counts;
 
-            for (int i = 0; i < machine.productQueue.Count; i++)
+            foreach (var machine in machines)
             {
-                Add(counts, new Recipe
+                if (machine == null || machine.productQueue == null) continue;
+
+                for (int i = 0; i < machine.productQueue.Count; i++)
                 {
-                    ProductID = machine.productQueue[i],
-                    Combinables = (machine.combinableQueue != null && i < machine.combinableQueue.Count)
-                        ? machine.combinableQueue[i] : "",
-                }, 1);
+                    Add(counts, new Recipe
+                    {
+                        ProductID = machine.productQueue[i],
+                        Combinables = (machine.combinableQueue != null && i < machine.combinableQueue.Count)
+                            ? machine.combinableQueue[i] : "",
+                    }, 1);
+                }
             }
             return counts;
+        }
+
+        // Every machine in the shop, nearest first.
+        //
+        // Nearest first only decides who gets the first run when queues are level, which makes the
+        // machine you are standing at start work soonest.
+        private static List<ManufacturingProduction> AllMachines()
+        {
+            var list = new List<ManufacturingProduction>();
+            foreach (var m in UnityEngine.Object.FindObjectsOfType<ManufacturingProduction>())
+                if (m != null) list.Add(m);
+
+            var cam = Camera.main;
+            if (cam != null)
+            {
+                var origin = cam.transform.position;
+                list.Sort((a, b) => (a.transform.position - origin).sqrMagnitude
+                                    .CompareTo((b.transform.position - origin).sqrMagnitude));
+            }
+            return list;
         }
 
         // Would a manufacturing employee find restocking work right now?
@@ -248,7 +283,7 @@ namespace SupermarketTweaks
             return false;
         }
 
-        private static List<Need> Calculate(NPC_Manager mgr, ManufacturingProduction machine)
+        private static List<Need> Calculate(NPC_Manager mgr, List<ManufacturingProduction> machines)
         {
             var needs = new List<Need>();
 
@@ -260,7 +295,10 @@ namespace SupermarketTweaks
             ShelfStats(mgr, capacity, onShelf);
 
             var stock = Stock(mgr);
-            var queued = Queued(machine);
+            var queued = Queued(machines);
+
+            int minimum = ManufactureOrderConfig.MinimumStock != null
+                ? Mathf.Max(0, ManufactureOrderConfig.MinimumStock.Value) : 0;
 
             foreach (var pair in capacity)
             {
@@ -276,7 +314,16 @@ namespace SupermarketTweaks
                 onShelf.TryGetValue(key, out have);
                 stock.TryGetValue(key, out made);
 
-                int shortfall = pair.Value - (have + made);
+                // Fill the shelves, or hold the minimum, whichever asks for more - the same rule
+                // the ordering button uses, and for the same reason: a shelf that is merely full is
+                // one busy afternoon from empty, with nothing behind it.
+                //
+                // No +1 on capacity here, unlike ordering. That margin exists to cover a delivery's
+                // travel time; a run has none to cover, and an over-run costs ingredients off your
+                // own shelves. Set the minimum above capacity if you want a buffer.
+                int target = Mathf.Max(pair.Value, minimum);
+
+                int shortfall = target - (have + made);
                 if (shortfall <= 0) continue;
 
                 int perBox = mb.productsData[key.ProductID].itemsPerBox;
@@ -292,7 +339,7 @@ namespace SupermarketTweaks
                 needs.Add(new Need
                 {
                     What = key, Runs = runs, Have = have + made,
-                    Target = pair.Value, PerBox = perBox,
+                    Target = target, PerBox = perBox,
                 });
             }
 
@@ -321,25 +368,20 @@ namespace SupermarketTweaks
             return best;
         }
 
-        internal static void Run() => Run(null);
-
-        // machine == null means "whichever one you are standing at", which is what the hotkey and
-        // the overlay want. The in-panel button passes its own instead: nearest would nearly always
-        // agree, and nearly is how you queue into the wrong machine when two stand side by side.
-        internal static void Run(ManufacturingProduction machine)
+        internal static void Run()
         {
             try
             {
                 var mgr = NPC_Manager.Instance;
-                if (machine == null) machine = Target();
-                if (mgr == null || machine == null)
+                var machines = AllMachines();
+                if (mgr == null || machines.Count == 0)
                 {
                     LastResult = "no manufacturing machine found";
                     Plugin.Log.LogInfo($"[Produce] {LastResult}.");
                     return;
                 }
 
-                var needs = Calculate(mgr, machine);
+                var needs = Calculate(mgr, machines);
                 if (needs.Count == 0)
                 {
                     LastResult = "nothing to make - shelves full or already queued";
@@ -348,6 +390,13 @@ namespace SupermarketTweaks
                 }
 
                 int cap = Mathf.Max(1, ManufactureOrderConfig.MaxRuns.Value);
+
+                // Each machine's own queue counts against its own cap - a machine already loaded up
+                // by hand gets less of this batch, not the same amount on top.
+                var load = new int[machines.Count];
+                for (int i = 0; i < machines.Count; i++)
+                    load[i] = machines[i].productQueue != null ? machines[i].productQueue.Count : 0;
+
                 int added = 0, dropped = 0;
                 var sb = new StringBuilder();
 
@@ -355,12 +404,15 @@ namespace SupermarketTweaks
                 {
                     for (int i = 0; i < need.Runs; i++)
                     {
-                        if (added >= cap) { dropped++; continue; }
+                        int target = Emptiest(load, cap);
+                        if (target < 0) { dropped++; continue; }
 
                         // Public, and it does nothing but forward to CmdAddToProductionQueue, which
                         // is requiresAuthority: false - so this works from a client as well as the
                         // host, exactly like clicking the machine's own button.
-                        machine.AddItemFromManufacturingDesk(need.What.ProductID, need.What.Combinables ?? "");
+                        machines[target].AddItemFromManufacturingDesk(need.What.ProductID,
+                                                                      need.What.Combinables ?? "");
+                        load[target]++;
                         added++;
                     }
 
@@ -369,15 +421,39 @@ namespace SupermarketTweaks
                                   $"have {need.Have}, target {need.Target}, {need.Runs} run(s) of {need.PerBox}");
                 }
 
-                LastResult = $"{added} run(s) queued across {needs.Count} product(s)"
-                           + (dropped > 0 ? $"; {dropped} not added, MaxQueuedRuns is {cap}" : "");
-                Plugin.Log.LogInfo($"[Produce] {LastResult}:\n" + sb);
+                var spread = new StringBuilder();
+                for (int i = 0; i < machines.Count; i++)
+                {
+                    if (i > 0) spread.Append(", ");
+                    spread.Append($"{machines[i].gameObject.name}={load[i]}");
+                }
+
+                LastResult = $"{added} run(s) across {machines.Count} machine(s), {needs.Count} product(s)"
+                           + (dropped > 0 ? $"; {dropped} not added, every machine is at MaxQueuedRuns ({cap})" : "");
+                Plugin.Log.LogInfo($"[Produce] {LastResult}\n    queues now: {spread}\n" + sb);
             }
             catch (Exception e)
             {
                 LastResult = "failed: " + e.Message;
                 Plugin.Log.LogError($"[Produce] {e}");
             }
+        }
+
+        // The machine with the shortest queue that is still under the cap, or -1 if they all are.
+        //
+        // Levelling the queues rather than filling one machine at a time is the whole point: the
+        // machines run in parallel, so a hundred runs on one and none on the other takes as long as
+        // a hundred runs, while fifty each takes half that.
+        private static int Emptiest(int[] load, int cap)
+        {
+            int best = -1;
+            for (int i = 0; i < load.Length; i++)
+            {
+                if (load[i] >= cap) continue;
+                if (best >= 0 && load[i] >= load[best]) continue;   // >= keeps the nearest on ties
+                best = i;
+            }
+            return best;
         }
     }
 

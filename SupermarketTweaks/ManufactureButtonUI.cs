@@ -106,12 +106,11 @@ namespace SupermarketTweaks
             {
                 button.onClick.RemoveAllListeners();
 
-                // Bound to THIS machine rather than letting Run() pick the nearest. You are standing
-                // at the one whose panel you just clicked, so nearest would almost always agree -
-                // but "almost always" is how you end up queueing into the wrong machine in a shop
-                // with two of them side by side.
-                var target = machine;
-                button.onClick.AddListener(() => ManufactureOrder.Run(target));
+                // Not bound to this machine any more. Run() spreads the batch across every
+                // machine in the shop, which is the point - they produce in parallel, so a hundred
+                // runs on one takes as long as a hundred runs while fifty each takes half that.
+                // The button is a "refill the shop" action, not "load up this box".
+                button.onClick.AddListener(() => ManufactureOrder.Run());
             }
             else
             {
