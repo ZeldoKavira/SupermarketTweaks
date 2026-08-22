@@ -114,13 +114,20 @@ namespace SupermarketTweaks
             if (_scanned != null && incoming.Count == _scanned.Count && incoming.SetEquals(_scanned)) return;
 
             _scanned = incoming;
+            Version++;
             Save();
             Plugin.Log.LogInfo($"[Research] Host's scanned list applied ({incoming.Count} product(s)).");
         }
 
+        // Bumped whenever the answer to IsExhausted could have changed, so the per-frame label
+        // check can cache against it instead of recomputing.
+        internal static int Version { get; private set; }
+
         internal static void Record(int productID)
         {
             if (productID < 0 || !Scanned.Add(productID)) return;
+
+            Version++;
 
             Save();
 
@@ -240,6 +247,15 @@ namespace SupermarketTweaks
         private static PropertyInfo _labelText;
         private static GameObject _labelOwner;
 
+        // The wanted string is cached per product, because working it out is not cheap and this
+        // runs EVERY FRAME. IsExhausted walks all thirty recipes, splitting each on '|' and then
+        // every slot on '-', and NameOf goes through the localization dictionary - so the first
+        // version allocated dozens of arrays and strings per frame just to confirm the label had
+        // not changed. Recomputed only when the hovered product changes or the scanned set does.
+        private static int _cachedId = int.MinValue;
+        private static int _cachedVersion = -1;
+        private static string _cachedWant;
+
         private static void Postfix(PlayerNetwork __instance)
         {
             try
@@ -289,11 +305,16 @@ namespace SupermarketTweaks
                 }
                 if (_label == null || _labelText == null) return;
 
-                string want = ResearchTracker.NameOf(id);
-                if (ResearchTracker.IsExhausted(id)) want += ResearchTrackerConfig.Marker.Value;
+                if (id != _cachedId || ResearchTracker.Version != _cachedVersion)
+                {
+                    _cachedId = id;
+                    _cachedVersion = ResearchTracker.Version;
+                    _cachedWant = ResearchTracker.NameOf(id)
+                                + (ResearchTracker.IsExhausted(id) ? ResearchTrackerConfig.Marker.Value : "");
+                }
 
-                if ((_labelText.GetValue(_label, null) as string) != want)
-                    _labelText.SetValue(_label, want, null);
+                if ((_labelText.GetValue(_label, null) as string) != _cachedWant)
+                    _labelText.SetValue(_label, _cachedWant, null);
             }
             catch (Exception e) { Plugin.Log.LogError($"[Research] label: {e.Message}"); }
         }

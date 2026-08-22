@@ -385,6 +385,12 @@ namespace SupermarketTweaks
     {
         private Rect _rect = new Rect(20f, 90f, 300f, 58f);
 
+        // Same fix as the ordering overlay: Target() calls FindObjectsOfType, and OnGUI runs
+        // several times a frame, so resolving the machine in there was several scene walks per
+        // frame for a fallback button that is off by default.
+        private ManufacturingProduction _machine;
+        private float _nextLook;
+
         private void Update()
         {
             try
@@ -392,6 +398,12 @@ namespace SupermarketTweaks
                 if (!ManufactureOrderConfig.On) return;
                 if (ManufactureOrderConfig.Key != null && ManufactureOrderConfig.Key.Value.IsDown())
                     ManufactureOrder.Run();
+
+                if (!ManufactureOrderConfig.ShowButton.Value) { _machine = null; return; }
+                if (Time.unscaledTime < _nextLook) return;
+                _nextLook = Time.unscaledTime + 0.5f;
+
+                _machine = ManufactureOrder.Target();
             }
             catch (Exception e) { Plugin.Log.LogError($"[Produce] {e.Message}"); }
         }
@@ -406,7 +418,7 @@ namespace SupermarketTweaks
         {
             if (!ManufactureOrderConfig.On || !ManufactureOrderConfig.ShowButton.Value) return;
 
-            var machine = ManufactureOrder.Target();
+            var machine = _machine;
             if (machine == null || machine.selectionCanvasOBJ == null
                 || !machine.selectionCanvasOBJ.activeInHierarchy) return;
 

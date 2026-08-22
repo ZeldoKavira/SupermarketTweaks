@@ -393,6 +393,14 @@ namespace SupermarketTweaks
     {
         private Rect _rect = new Rect(20f, 20f, 260f, 58f);
 
+        // Looked up on a timer here rather than inside OnGUI.
+        //
+        // OnGUI runs several times a frame - once per event, layout and repaint at minimum - so a
+        // FindObjectOfType in there costs several full scene walks per frame for a button that is
+        // usually not even drawn.
+        private OrderingDevice _device;
+        private float _nextLook;
+
         private void Update()
         {
             try
@@ -400,6 +408,12 @@ namespace SupermarketTweaks
                 if (!RestockOrderConfig.On) return;
                 if (RestockOrderConfig.Key != null && RestockOrderConfig.Key.Value.IsDown())
                     RestockOrder.Run();
+
+                if (!RestockOrderConfig.ShowButton.Value) { _device = null; return; }
+                if (Time.unscaledTime < _nextLook) return;
+                _nextLook = Time.unscaledTime + 0.5f;
+
+                _device = UnityEngine.Object.FindObjectOfType<OrderingDevice>();
             }
             catch (Exception e) { Plugin.Log.LogError($"[Order] {e.Message}"); }
         }
@@ -412,7 +426,7 @@ namespace SupermarketTweaks
         {
             if (!RestockOrderConfig.On || !RestockOrderConfig.ShowButton.Value) return;
 
-            var device = UnityEngine.Object.FindObjectOfType<OrderingDevice>();
+            var device = _device;
             if (device == null || !device.isActiveAndEnabled) return;
 
             GUI.Box(_rect, GUIContent.none);

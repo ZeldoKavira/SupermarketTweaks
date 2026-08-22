@@ -124,9 +124,27 @@ namespace SupermarketTweaks
         // That same flag is the exact readiness signal we need, so it is read directly rather than
         // approximated with a timer. No Builder_Main in the scene at all means the main menu, where
         // there is nothing worth speeding up anyway.
+        // The Builder_Main reference is cached because this is called up to three times a FRAME -
+        // once per hotkey guard and once in the throttled body - and FindObjectOfType walks every
+        // object in the scene. Written without a second thought, it was the single most expensive
+        // thing this mod did.
+        //
+        // Only the search is cached, not the answer: the flag is re-read every call, so readiness
+        // is still current. A destroyed builder (level change) makes the reference null and the
+        // search runs again, at most once a second.
+        private static Builder_Main _builder;
+        private static float _nextBuilderSearch;
+
         private static bool LevelReady()
         {
-            var builder = UnityEngine.Object.FindObjectOfType<Builder_Main>();
+            if (_builder == null)
+            {
+                if (Time.unscaledTime < _nextBuilderSearch) return false;
+                _nextBuilderSearch = Time.unscaledTime + 1f;
+
+                _builder = UnityEngine.Object.FindObjectOfType<Builder_Main>();
+            }
+            var builder = _builder;
             if (builder == null) return false;
 
             if (!_lookedForReady)

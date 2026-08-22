@@ -190,6 +190,8 @@ namespace SupermarketTweaks
     {
         private static FieldInfo _dummyField;
         private static bool _looked;
+        private static Builder_Main _builder;
+        private static float _nextSearch;
 
         private void Update()
         {
@@ -197,7 +199,15 @@ namespace SupermarketTweaks
             {
                 if (!PlacementOverlapConfig.ToleranceOn) return;
 
-                var builder = UnityEngine.Object.FindObjectOfType<Builder_Main>();
+                // Cached for the same reason GameSpeed's is: this runs every frame, and
+                // FindObjectOfType walks the whole scene to hand back the same object each time.
+                if (_builder == null)
+                {
+                    if (Time.unscaledTime < _nextSearch) return;
+                    _nextSearch = Time.unscaledTime + 1f;
+                    _builder = UnityEngine.Object.FindObjectOfType<Builder_Main>();
+                }
+                var builder = _builder;
                 if (builder == null) return;
 
                 if (!_looked)
