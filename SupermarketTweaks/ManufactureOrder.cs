@@ -26,13 +26,13 @@ namespace SupermarketTweaks
     // product.
     //
     // How many runs
-    //   target    = row capacity, summed over every row assigned to that (id, combination)
+    //   target    = max(row capacity for that (id, combination) + 1, MinimumManufacturedStock)
     //   shortfall = target - everything already made, wherever it is standing
     //   runs      = ceil(shortfall / itemsPerBox)
     //
-    // No +1 here, unlike the ordering button. Back stock exists there to absorb the delay of a
-    // delivery; a production run has no such delay to hide, and an over-run of a manufactured good
-    // costs ingredients that came off your own shelves.
+    // The +1 on capacity guarantees back stock, exactly as it does on the ordering side: a target
+    // of precisely capacity is met by a full shelf and an empty rack, and one busy afternoon later
+    // there is nothing behind the gap.
     public static class ManufactureOrderConfig
     {
         internal static ConfigEntry<bool> Enabled;
@@ -56,7 +56,7 @@ namespace SupermarketTweaks
                 new ConfigDescription("Keep at least this many units of every manufactured product, " +
                     "counting shelves, manufacturing storage and boxes on the floor. A floor on the " +
                     "total, not a bonus on top, so a product whose shelves already hold more is " +
-                    "unaffected. 0 makes only enough to fill the shelves.",
+                    "unaffected. 0 means fill the shelves and keep one spare.",
                     new AcceptableValueRange<int>(0, 2000)));
             MaxRuns = cfg.Bind("Manufacturing", "MaxQueuedRuns", 20,
                 new ConfigDescription("Longest queue any ONE machine may be left holding. Counted " +
@@ -314,14 +314,14 @@ namespace SupermarketTweaks
                 onShelf.TryGetValue(key, out have);
                 stock.TryGetValue(key, out made);
 
-                // Fill the shelves, or hold the minimum, whichever asks for more - the same rule
-                // the ordering button uses, and for the same reason: a shelf that is merely full is
-                // one busy afternoon from empty, with nothing behind it.
+                // Fill the shelves and keep one spare, or hold the minimum, whichever asks for
+                // more - the same rule the ordering button uses.
                 //
-                // No +1 on capacity here, unlike ordering. That margin exists to cover a delivery's
-                // travel time; a run has none to cover, and an over-run costs ingredients off your
-                // own shelves. Set the minimum above capacity if you want a buffer.
-                int target = Mathf.Max(pair.Value, minimum);
+                // The +1 on capacity is what guarantees back stock. A target of exactly capacity is
+                // satisfied by a full shelf and an empty rack, which is the shop one busy afternoon
+                // from a gap with nothing behind it; asking for one unit more means a run gets
+                // queued and the remainder of its box lands in storage.
+                int target = Mathf.Max(pair.Value + 1, minimum);
 
                 int shortfall = target - (have + made);
                 if (shortfall <= 0) continue;
