@@ -75,7 +75,9 @@ jobs:
           $v = '${{ steps.version.outputs.value }}'
           New-Item -ItemType Directory -Force -Path package/BepInEx/plugins | Out-Null
           Copy-Item SupermarketTweaks/bin/Release/SupermarketTweaks.dll package/BepInEx/plugins/
-          if (Test-Path README.md) { Copy-Item README.md package/ }
+          # installer/README-package.txt, not the repo README: that one is developer notes full
+          # of the game's internal method names and is no use to somebody who just wants the mod.
+          Copy-Item installer/README-package.txt package/README.txt
           Compress-Archive -Path package/* -DestinationPath "SupermarketTweaks-$v.zip" -Force
           "ZIP=SupermarketTweaks-$v.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
