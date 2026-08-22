@@ -1,0 +1,114 @@
+# Tagged releases.
+#
+# The build workflow keeps publishing a rolling `latest` for the in-house updater script. This one
+# is separate and only fires on a version tag, because a Nexus upload is public and should happen
+# when you say so, never on every push to main.
+#
+# Push a tag to release:
+#
+#   git tag v1.4.0 && git push origin v1.4.0
+#
+# The tag is the single source of the version: it goes into the DLL through -p:Version, into the
+# zip name, and into the Nexus upload, so the three can never disagree.
+name: release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without the leading v (e.g. 1.4.0)'
+        required: true
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    # Declared at job level on purpose: the `secrets` context is not available to a step's `if`,
+    # and neither is that step's own `env`. A job-level env is, which is what lets the Nexus step
+    # skip itself cleanly when no key is configured.
+    env:
+      NEXUS_API_KEY: ${{ secrets.NEXUS_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Work out the version
+        id: version
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $env:GITHUB_REF -replace '^refs/tags/v', ''
+          } else {
+            '${{ github.event.inputs.version }}'
+          }
+          if (-not $v) { throw 'No version supplied.' }
+          "value=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Fetch BepInEx
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.3/BepInEx_win_x64_5.4.23.3.zip'
+          Invoke-WebRequest -Uri $url -OutFile bepinex.zip
+          Expand-Archive bepinex.zip -DestinationPath bepinex -Force
+
+      - name: Build
+        shell: pwsh
+        run: |
+          dotnet build SupermarketTweaks/SupermarketTweaks.csproj -c Release `
+            -p:Version=${{ steps.version.outputs.value }} `
+            -p:ManagedDir="$env:GITHUB_WORKSPACE\refs\Managed" `
+            -p:BepInExCore="$env:GITHUB_WORKSPACE\bepinex\BepInEx\core"
+
+      # Laid out so the zip can be extracted straight into the game folder, which is what mod
+      # managers expect and what stops people dropping a bare DLL next to the exe.
+      - name: Package
+        shell: pwsh
+        run: |
+          $v = '${{ steps.version.outputs.value }}'
+          New-Item -ItemType Directory -Force -Path package/BepInEx/plugins | Out-Null
+          Copy-Item SupermarketTweaks/bin/Release/SupermarketTweaks.dll package/BepInEx/plugins/
+          if (Test-Path README.md) { Copy-Item README.md package/ }
+          Compress-Archive -Path package/* -DestinationPath "SupermarketTweaks-$v.zip" -Force
+          "ZIP=SupermarketTweaks-$v.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.version.outputs.value }}" "$env:ZIP" `
+            --title "v${{ steps.version.outputs.value }}" `
+            --generate-notes
+
+      # Only updates an existing file on an existing mod page - the API cannot create either. The
+      # page has to be made and its first file uploaded by hand once; after that this takes over.
+      #
+      # Needs two repository secrets and one variable:
+      #   secrets.NEXUS_API_KEY   from your Nexus account settings, API tab
+      #   vars.NEXUS_FILE_ID      the mod's Files tab, "API Info"
+      #   vars.NEXUS_MOD_ID       the number in the mod page URL, required for the changelog
+      #
+      # Skipped rather than failed when the secret is absent, so tagging still produces a GitHub
+      # release before the Nexus page exists.
+      - name: Upload to Nexus Mods
+        if: env.NEXUS_API_KEY != ''
+        uses: Nexus-Mods/upload-action@main
+        with:
+          api_key: ${{ secrets.NEXUS_API_KEY }}
+          file_id: ${{ vars.NEXUS_FILE_ID }}
+          filename: ${{ env.ZIP }}
+          version: ${{ steps.version.outputs.value }}
+          display_name: Supermarket Tweaks ${{ steps.version.outputs.value }}
+          # update_mod_version moves the mod page's own version to match, rather than leaving the
+          # page saying one thing and the file another.
+          update_mod_version: 'true'
+          mod_id: ${{ vars.NEXUS_MOD_ID }}
+          changelog: ${{ github.event.head_commit.message }}

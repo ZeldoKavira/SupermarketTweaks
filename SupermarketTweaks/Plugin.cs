@@ -14,7 +14,7 @@ namespace SupermarketTweaks
     // Two features, both of which exist because the game keeps undoing something you asked for:
     // prices drift out of line every time inflation moves, and Time.timeScale is forced back to 1
     // at the end of every day.
-    [BepInPlugin(Guid, "Supermarket Tweaks", "1.0.0")]
+    [BepInPlugin(Guid, "Supermarket Tweaks", PluginVersion.Value)]
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "net.zeldo.supermarkettweaks";
@@ -68,7 +68,7 @@ namespace SupermarketTweaks
 
             ForwardUnityErrors();
             WatchConfigFile();
-            Log.LogInfo("Supermarket Tweaks loaded.");
+            Log.LogInfo($"Supermarket Tweaks {PluginVersion.Value} loaded.");
         }
 
         // Patched per class rather than with PatchAll: one bad signature - an overload that moved,

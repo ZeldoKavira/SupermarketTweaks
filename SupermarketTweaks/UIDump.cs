@@ -17,11 +17,14 @@ namespace SupermarketTweaks
     // reports FSMs without the mod needing to link against them.
     public static class UIDumpConfig
     {
+        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<KeyboardShortcut> Key;
         internal static ConfigEntry<bool> ActiveOnly;
 
         public static void Init(ConfigFile cfg)
         {
+            Enabled = cfg.Bind("UI", "EnableUIDump", false,
+                "Diagnostic tool, off by default. These write hierarchy dumps into the BepInEx folder and exist for working out where a piece of game UI lives; turn it on only if you are investigating something or have been asked to.");
             Key = cfg.Bind("UI", "DumpUIKey", new KeyboardShortcut(KeyCode.F12),
                 "Dump the ordering terminal's UI hierarchy to BepInEx/SupermarketTweaks-ui.txt. " +
                 "Open the terminal first.");
@@ -37,6 +40,7 @@ namespace SupermarketTweaks
         {
             try
             {
+                if (UIDumpConfig.Enabled == null || !UIDumpConfig.Enabled.Value) return;
                 if (UIDumpConfig.Key == null || !UIDumpConfig.Key.Value.IsDown()) return;
                 Dump();
             }

@@ -21,10 +21,13 @@ namespace SupermarketTweaks
     // entirely: the array is a public field, already loaded, already correct.
     public static class EasterDumpConfig
     {
+        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<KeyboardShortcut> Key;
 
         public static void Init(ConfigFile cfg)
         {
+            Enabled = cfg.Bind("UI", "EnableEasterEggDump", false,
+                "Diagnostic tool, off by default. These write hierarchy dumps into the BepInEx folder and exist for working out where a piece of game UI lives; turn it on only if you are investigating something or have been asked to.");
             Key = cfg.Bind("UI", "DumpEasterEggsKey", new KeyboardShortcut(KeyCode.F10),
                 "Log the chat phrases that trigger easter eggs, and which have already been used " +
                 "on this save.");
@@ -37,6 +40,7 @@ namespace SupermarketTweaks
         {
             try
             {
+                if (EasterDumpConfig.Enabled == null || !EasterDumpConfig.Enabled.Value) return;
                 if (EasterDumpConfig.Key == null || !EasterDumpConfig.Key.Value.IsDown()) return;
                 Dump();
             }

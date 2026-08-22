@@ -21,6 +21,7 @@ namespace SupermarketTweaks
         internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<string> NameFilter;
         internal static ConfigEntry<bool> IncludeTriggers;
+        internal static ConfigEntry<bool> ListEnabled;
         internal static ConfigEntry<KeyboardShortcut> ListKey;
         internal static ConfigEntry<float> ListRadius;
         internal static ConfigEntry<string> ListIgnore;
@@ -36,6 +37,8 @@ namespace SupermarketTweaks
             IncludeTriggers = cfg.Bind("World", "AlsoDisableTriggers", false,
                 "Also disable trigger colliders on matches. Off by default: triggers are usually " +
                 "interaction volumes, and switching them off can break using the object.");
+            ListEnabled = cfg.Bind("World", "EnablePropLister", false,
+                "Diagnostic tool, off by default. These write hierarchy dumps into the BepInEx folder and exist for working out where a piece of game UI lives; turn it on only if you are investigating something or have been asked to.");
             ListKey = cfg.Bind("World", "ListPropsKey", new KeyboardShortcut(KeyCode.F11),
                 "Log every collider near you, closest first. Stand against whatever is blocking " +
                 "you and press this to find out what it is actually called.");
@@ -80,7 +83,8 @@ namespace SupermarketTweaks
         {
             try
             {
-                if (NoClipPropsConfig.ListKey != null && NoClipPropsConfig.ListKey.Value.IsDown())
+                if (NoClipPropsConfig.ListEnabled != null && NoClipPropsConfig.ListEnabled.Value
+                    && NoClipPropsConfig.ListKey != null && NoClipPropsConfig.ListKey.Value.IsDown())
                     ListMatches();
 
                 if (Time.unscaledTime < _next) return;

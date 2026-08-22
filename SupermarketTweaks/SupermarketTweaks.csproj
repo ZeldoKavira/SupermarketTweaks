@@ -9,6 +9,10 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <NoWarn>$(NoWarn);CS0436;CS8632</NoWarn>
 
+    <!-- Overridden by CI from the git tag: -p:Version=1.4.0. The default keeps local builds
+         honest about being untagged rather than claiming to be a release. -->
+    <Version Condition="'$(Version)' == ''">0.0.0-dev</Version>
+
     <GameDir Condition="'$(GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Supermarket Together</GameDir>
     <ManagedDir Condition="'$(ManagedDir)' == ''">$(GameDir)\Supermarket Together_Data\Managed</ManagedDir>
     <BepInExCore Condition="'$(BepInExCore)' == ''">$(GameDir)\BepInEx\core</BepInExCore>
@@ -38,5 +42,22 @@
   <ItemGroup>
     <Reference Update="@(Reference)"><Private>false</Private></Reference>
   </ItemGroup>
+
+  <!-- BepInPlugin needs a compile-time constant, so the version is written into a generated
+       source file rather than read at runtime. WriteOnlyWhenDifferent keeps this from dirtying
+       the build every time. -->
+  <Target Name="GeneratePluginVersion" BeforeTargets="BeforeCompile">
+    <PropertyGroup>
+      <PluginVersionFile>$(IntermediateOutputPath)PluginVersion.cs</PluginVersionFile>
+    </PropertyGroup>
+    <WriteLinesToFile
+      File="$(PluginVersionFile)"
+      Lines="namespace SupermarketTweaks { internal static class PluginVersion { internal const string Value = &quot;$(Version)&quot;%3B } }"
+      Overwrite="true"
+      WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(PluginVersionFile)" />
+    </ItemGroup>
+  </Target>
 
 </Project>
