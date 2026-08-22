@@ -40,6 +40,27 @@ namespace SupermarketTweaks
         }
     }
 
+
+    // Manufactured goods have their own localization table.
+    //
+    // Resolving one through "product" gives an unrelated grocery, which is precisely how the hover
+    // label went wrong the first time - so this lives somewhere both callers can reach rather than
+    // being copied.
+    internal static class ManufacturedNames
+    {
+        internal static string Of(int productID)
+        {
+            try
+            {
+                var lm = LocalizationManager.instance;
+                return lm != null
+                    ? lm.GetLocalizationString("mfactureproduct" + productID)
+                    : productID.ToString();
+            }
+            catch { return productID.ToString(); }
+        }
+    }
+
     [HarmonyPatch(typeof(PlayerNetwork), "Update")]
     public static class Patch_PlayerNetwork_Update
     {
@@ -155,7 +176,7 @@ namespace SupermarketTweaks
                 _cachedId = id;
                 _cachedCombinables = combinables;
 
-                _cachedWant = ManufacturedName(id) + StandingSuffix(id, combinables);
+                _cachedWant = ManufacturedNames.Of(id) + StandingSuffix(id, combinables);
                 return;
             }
 
@@ -170,20 +191,6 @@ namespace SupermarketTweaks
 
             _cachedWant = ResearchTracker.NameOf(id)
                         + (ResearchTracker.IsExhausted(id) ? ResearchTrackerConfig.Marker.Value : "");
-        }
-
-        // Manufactured goods have their own localization table. Resolving one through "product"
-        // gives an unrelated grocery, which is precisely how this went wrong the first time.
-        internal static string ManufacturedName(int productID)
-        {
-            try
-            {
-                var lm = LocalizationManager.instance;
-                return lm != null
-                    ? lm.GetLocalizationString("mfactureproduct" + productID)
-                    : productID.ToString();
-            }
-            catch { return productID.ToString(); }
         }
 
         // "  [no shelf - 50 stored]" or "  [shelf 12/40, 25 stored]".

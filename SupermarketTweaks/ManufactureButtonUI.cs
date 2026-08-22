@@ -51,6 +51,7 @@ namespace SupermarketTweaks
                 if (!ManufactureOrderConfig.On) return;
                 Ensure();
                 UpdateStockLines();
+                MarkRecipeList();
             }
             catch (Exception e) { Plugin.Log.LogError($"[ProduceButton] {e.Message}"); }
         }
@@ -93,6 +94,58 @@ namespace SupermarketTweaks
                 }
 
                 SetText(labelTr.gameObject, text);
+            }
+        }
+
+        // Tag each entry in the base recipe list with whether the shop can sell it at all.
+        //
+        // The list is the first thing you look at and the only thing it tells you is the name. A
+        // recipe with no display row anywhere is one you can make and then cannot put out, and
+        // there is no way to know that without walking the shelves yourself.
+        //
+        // The id behind each button is reconstructed the way GenerateInterface built the list:
+        //
+        //   for (int j = 0; j < unlockedBaseProducts.Length; j++)
+        //       if (unlockedBaseProducts[j]) Instantiate(UIBaseButtonPrefabOBJ, UIBaseProductsParent);
+        //
+        // so the Nth child is the Nth unlocked product. The button also carries the id in a
+        // PlayMaker int called "Index", but reading that would mean a PlayMaker reference for
+        // something the unlock array already answers exactly.
+        //
+        // Rewritten every tick from the raw name rather than appended to, so it cannot stack up and
+        // it repairs itself when GenerateInterface rebuilds the list.
+        private void MarkRecipeList()
+        {
+            if (!ManufactureOrderConfig.MarkRecipeList.Value) return;
+
+            var mb = ManufacturingBase.Instance;
+            if (mb == null || mb.unlockedBaseProducts == null) return;
+
+            var unlocked = new System.Collections.Generic.List<int>();
+            for (int j = 0; j < mb.unlockedBaseProducts.Length; j++)
+                if (mb.unlockedBaseProducts[j]) unlocked.Add(j);
+
+            foreach (var machine in UnityEngine.Object.FindObjectsOfType<ManufacturingProduction>(true))
+            {
+                var parent = machine.UIBaseProductsParent;
+                if (parent == null) continue;
+
+                var canvas = machine.selectionCanvasOBJ;
+                if (canvas == null || !canvas.activeInHierarchy) continue;
+
+                for (int i = 0; i < parent.childCount && i < unlocked.Count; i++)
+                {
+                    int id = unlocked[i];
+                    var entry = parent.GetChild(i);
+                    if (entry.childCount < 2) continue;              // child 1 is the name field
+
+                    string want = ManufacturedNames.Of(id)
+                                + (ManufactureOrder.AnyVariantOnShelf(id)
+                                    ? ManufactureOrderConfig.OnShelfMark.Value
+                                    : ManufactureOrderConfig.NoShelfMark.Value);
+
+                    SetText(entry.GetChild(1).gameObject, want);
+                }
             }
         }
 

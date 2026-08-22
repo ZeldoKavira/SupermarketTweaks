@@ -40,6 +40,9 @@ namespace SupermarketTweaks
         internal static ConfigEntry<bool> ShowButton;
         internal static ConfigEntry<int> MaxRuns;
         internal static ConfigEntry<int> MinimumStock;
+        internal static ConfigEntry<bool> MarkRecipeList;
+        internal static ConfigEntry<string> OnShelfMark;
+        internal static ConfigEntry<string> NoShelfMark;
 
         public static void Init(ConfigFile cfg)
         {
@@ -52,6 +55,14 @@ namespace SupermarketTweaks
                 "Draw a fallback overlay button while a machine's interface is open. Off by " +
                 "default now that a real button sits in the machine's own panel - turn it on if " +
                 "that one fails to appear.");
+            MarkRecipeList = cfg.Bind("Manufacturing", "MarkRecipeList", true,
+                "Tag every entry in the machine's base recipe list with whether ANY variant of it " +
+                "has a display shelf assigned - stocked or not. A recipe with no row anywhere is " +
+                "one you can make and then cannot put out.");
+            OnShelfMark = cfg.Bind("Manufacturing", "OnShelfMark", "  [on shelf]",
+                "Appended to a recipe that has a display row. Leading spaces are on purpose.");
+            NoShelfMark = cfg.Bind("Manufacturing", "NoShelfMark", "  [NO SHELF]",
+                "Appended to a recipe with no display row anywhere.");
             MinimumStock = cfg.Bind("Manufacturing", "MinimumManufacturedStock", 0,
                 new ConfigDescription("Keep at least this many units of every manufactured product, " +
                     "counting shelves, manufacturing storage and boxes on the floor. A floor on the " +
@@ -294,6 +305,31 @@ namespace SupermarketTweaks
             public int OnShelf;
             public int InStorage;      // manufacturing racks
             public int InBoxes;        // boxes still on the floor
+        }
+
+        // Does ANY variant of this base product have a display row?
+        //
+        // Deliberately ignores the combination, unlike everything else here. The question the
+        // machine's list needs answered is "is this recipe sellable at all" - if some combination of
+        // it has a shelf, the shop can put the stuff out, and picking which combination is the next
+        // decision rather than this one.
+        //
+        // Stock is not consulted either: an empty row still counts. A shelf assigned but bare is
+        // precisely the thing you would want to manufacture for.
+        internal static bool AnyVariantOnShelf(int baseProductID)
+        {
+            var mgr = NPC_Manager.Instance;
+            if (mgr == null || mgr.manufacturingShelvesOBJ == null) return false;
+
+            foreach (Transform shelf in mgr.manufacturingShelvesOBJ.transform)
+            {
+                var c = shelf.GetComponent<ManufacturingContainer>();
+                if (c == null || c.productInfoArray == null) continue;
+
+                for (int j = 0; j < c.productInfoArray.Length / 2; j++)
+                    if (c.productInfoArray[j * 2] == baseProductID) return true;
+            }
+            return false;
         }
 
         internal static Standing Where(int productID, string combinables)
