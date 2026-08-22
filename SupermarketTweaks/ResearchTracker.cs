@@ -254,7 +254,57 @@ namespace SupermarketTweaks
         // not changed. Recomputed only when the hovered product changes or the scanned set does.
         private static int _cachedId = int.MinValue;
         private static int _cachedVersion = -1;
+
+        // null means "leave this label alone", which is the safe answer and the common one.
         private static string _cachedWant;
+
+        private static FieldInfo _maskField;
+
+        // Is the thing under the crosshair a normal shelf, or a manufactured one?
+        //
+        // This has to be asked, and not asking it is what broke manufactured names. Both branches of
+        // the hover code write to the SAME oldCanvasProductID field, but they mean different things
+        // by it and read different tables:
+        //
+        //   Data_Container           GetLocalizationString("product" + id)
+        //   ManufacturingContainer   GetLocalizationString("mfactureproduct" + id)
+        //
+        // Two separate id spaces. Reading a manufactured id out of that field and resolving it
+        // through "product" gives the name of an unrelated grocery, which is exactly what showed up.
+        //
+        // The marker has no business on a manufactured shelf anyway: the researcher takes ordinary
+        // products, so a manufactured good can never have been scanned.
+        //
+        // Costs one raycast, and only when the hovered product changes - the same raycast the game
+        // just did, with its own mask and range. Anything uncertain returns false, because leaving
+        // the label alone is always safe and overwriting it is not.
+        private static bool OnARegularShelf(PlayerNetwork instance)
+        {
+            try
+            {
+                if (_maskField == null)
+                {
+                    _maskField = AccessTools.Field(typeof(PlayerNetwork), "interactableMask");
+                    if (_maskField == null) return false;
+                }
+
+                var cam = Camera.main;
+                if (cam == null) return false;
+
+                var mask = (LayerMask)_maskField.GetValue(instance);
+
+                RaycastHit hit;
+                if (!Physics.Raycast(cam.transform.position, cam.transform.forward, out hit, 4f, mask))
+                    return false;
+
+                var owner = hit.transform.parent != null ? hit.transform.parent.parent : null;
+                if (owner == null) return false;
+
+                return owner.GetComponent<Data_Container>() != null
+                       && owner.GetComponent<ManufacturingContainer>() == null;
+            }
+            catch { return false; }
+        }
 
         private static void Postfix(PlayerNetwork __instance)
         {
@@ -309,9 +359,13 @@ namespace SupermarketTweaks
                 {
                     _cachedId = id;
                     _cachedVersion = ResearchTracker.Version;
-                    _cachedWant = ResearchTracker.NameOf(id)
-                                + (ResearchTracker.IsExhausted(id) ? ResearchTrackerConfig.Marker.Value : "");
+                    _cachedWant = OnARegularShelf(__instance)
+                        ? ResearchTracker.NameOf(id)
+                          + (ResearchTracker.IsExhausted(id) ? ResearchTrackerConfig.Marker.Value : "")
+                        : null;
                 }
+
+                if (_cachedWant == null) return;
 
                 if ((_labelText.GetValue(_label, null) as string) != _cachedWant)
                     _labelText.SetValue(_label, _cachedWant, null);
