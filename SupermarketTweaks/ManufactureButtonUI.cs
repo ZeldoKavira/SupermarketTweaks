@@ -36,20 +36,101 @@ namespace SupermarketTweaks
         private const string TemplateName = "BuyEmptyBox_Button";
         private const string CloneName    = "SMT_QueueRefillButton";
 
+        private const string StockName = "SMT_SelectedStockText";
+
         private float _next;
         private int _complaints;
 
         private void Update()
         {
             if (Time.unscaledTime < _next) return;
-            _next = Time.unscaledTime + 1f;
+            _next = Time.unscaledTime + 0.25f;
 
             try
             {
                 if (!ManufactureOrderConfig.On) return;
                 Ensure();
+                UpdateStockLines();
             }
             catch (Exception e) { Plugin.Log.LogError($"[ProduceButton] {e.Message}"); }
+        }
+
+        // What you already have of the recipe currently selected.
+        //
+        // The machine will happily let you queue a tenth box of something the shelves are full of,
+        // because nothing on this screen says how much exists - the panel is entirely about what to
+        // build, never about what you built last time.
+        //
+        // selectedProductID and selectedCombinables are the machine's own idea of the selection, so
+        // this always describes exactly what the Manufacture button would make.
+        private void UpdateStockLines()
+        {
+            foreach (var machine in UnityEngine.Object.FindObjectsOfType<ManufacturingProduction>(true))
+            {
+                var canvas = machine.selectionCanvasOBJ;
+                if (canvas == null || !canvas.activeInHierarchy) continue;   // only the open one
+
+                var panel = FindDeep(canvas.transform, PanelName);
+                if (panel == null) continue;
+
+                var labelTr = panel.Find(StockName);
+                if (labelTr == null) { labelTr = BuildStockLabel(panel); if (labelTr == null) continue; }
+
+                string text;
+                if (machine.selectedProductID < 0)
+                {
+                    text = "";
+                }
+                else
+                {
+                    var where = ManufactureOrder.Where(machine.selectedProductID,
+                                                       machine.selectedCombinables ?? "");
+                    text = where.HasShelf
+                        ? $"In store: shelf {where.OnShelf}/{where.ShelfCapacity}, " +
+                          $"{where.InStorage} stored, {where.InBoxes} in boxes"
+                        : $"In store: NO SHELF ASSIGNED, " +
+                          $"{where.InStorage} stored, {where.InBoxes} in boxes";
+                }
+
+                SetText(labelTr.gameObject, text);
+            }
+        }
+
+        // Cloned from AssembledRecipeText rather than built from scratch: it is a plain
+        // TextMeshProUGUI with no FSM and no SetLocalizationString, so the copy inherits the panel's
+        // font and sizing and needs nothing stripped.
+        private Transform BuildStockLabel(Transform panel)
+        {
+            var template = panel.Find("AssembledRecipeText") as RectTransform;
+            if (template == null) { Complain("No AssembledRecipeText to clone the stock line from."); return null; }
+
+            var clone = UnityEngine.Object.Instantiate(template.gameObject, panel);
+            clone.name = StockName;
+
+            var rect = clone.GetComponent<RectTransform>();
+            if (rect != null)
+            {
+                // Under the Manufacture button, which is the lowest thing on the panel at
+                // y=-223 with a height of 120.
+                rect.anchoredPosition = new Vector2(0f, -310f);
+                rect.sizeDelta = new Vector2(560f, 60f);
+            }
+
+            SetText(clone, "");
+            return clone.transform;
+        }
+
+        private static void SetText(GameObject go, string text)
+        {
+            foreach (var c in go.GetComponentsInChildren<Component>(true))
+            {
+                if (c == null || c.GetType().Name != "TextMeshProUGUI") continue;
+
+                var prop = c.GetType().GetProperty("text");
+                if (prop != null && (prop.GetValue(c, null) as string) != text)
+                    prop.SetValue(c, text, null);
+                return;
+            }
         }
 
         private void Ensure()

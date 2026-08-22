@@ -283,6 +283,53 @@ namespace SupermarketTweaks
             return false;
         }
 
+        // Where a manufactured good stands right now, for the two labels that report it.
+        //
+        // Both answers are wanted at once and both walk the same containers, so they are gathered in
+        // one pass rather than two.
+        internal struct Standing
+        {
+            public bool HasShelf;      // a display row is assigned to this exact (id, combination)
+            public int ShelfCapacity;
+            public int OnShelf;
+            public int InStorage;      // manufacturing racks
+            public int InBoxes;        // boxes still on the floor
+        }
+
+        internal static Standing Where(int productID, string combinables)
+        {
+            var result = new Standing();
+
+            var mgr = NPC_Manager.Instance;
+            if (mgr == null) return result;
+
+            var key = new Recipe { ProductID = productID, Combinables = combinables ?? "" };
+
+            var capacity = new Dictionary<Recipe, int>();
+            var onShelf = new Dictionary<Recipe, int>();
+            ShelfStats(mgr, capacity, onShelf);
+
+            int cap;
+            result.HasShelf = capacity.TryGetValue(key, out cap);
+            result.ShelfCapacity = cap;
+
+            int have;
+            onShelf.TryGetValue(key, out have);
+            result.OnShelf = have;
+
+            int stored;
+            StorageStock(mgr).TryGetValue(key, out stored);
+            result.InStorage = stored;
+
+            var floor = new Dictionary<Recipe, int>();
+            FloorStock(mgr, floor);
+            int loose;
+            floor.TryGetValue(key, out loose);
+            result.InBoxes = loose;
+
+            return result;
+        }
+
         private static List<Need> Calculate(NPC_Manager mgr, List<ManufacturingProduction> machines)
         {
             var needs = new List<Need>();

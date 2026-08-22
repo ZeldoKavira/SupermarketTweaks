@@ -35,6 +35,7 @@ namespace SupermarketTweaks
             SeasonalEventsConfig.Init(Config);
             ResearchTrackerConfig.Init(Config);
             ManufactureOrderConfig.Init(Config);
+            HoverLabelConfig.Init(Config);
             StaffRolesConfig.Init(Config);
             NetSyncConfig.Init(Config);
             PlacementOverlapConfig.Init(Config);
