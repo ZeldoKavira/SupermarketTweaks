@@ -81,6 +81,35 @@ jobs:
           Compress-Archive -Path package/* -DestinationPath "SupermarketTweaks-$v.zip" -Force
           "ZIP=SupermarketTweaks-$v.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      # The Nexus changelog comes from CHANGELOG.md, not from the commit message.
+      #
+      # head_commit.message was the first attempt and it is the wrong source twice over: commit
+      # messages here run to thirty lines of why-it-was-done, which is the opposite of what a player
+      # reading a changelog wants, and a tag moved onto an older commit would publish that commit's
+      # message rather than the release's.
+      #
+      # Everything between the first "## " heading and the next one, so the newest section is
+      # published and nothing else.
+      - name: Read the changelog
+        id: changelog
+        shell: pwsh
+        run: |
+          $notes = ''
+          if (Test-Path CHANGELOG.md) {
+            $lines = Get-Content CHANGELOG.md
+            $start = ($lines | Select-String -Pattern '^## ' | Select-Object -First 1).LineNumber
+            if ($start) {
+              $rest = $lines[$start..($lines.Count - 1)]
+              $end = ($rest | Select-String -Pattern '^## ' | Select-Object -First 1).LineNumber
+              $body = if ($end) { $rest[0..($end - 2)] } else { $rest }
+              $notes = ($body -join "`n").Trim()
+            }
+          }
+          if (-not $notes) { $notes = 'See the GitHub release for details.' }
+          "value<<EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $notes      | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "EOF"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
       - name: GitHub release
         shell: pwsh
         env:
@@ -113,4 +142,4 @@ jobs:
           # page saying one thing and the file another.
           update_mod_version: 'true'
           mod_id: ${{ vars.NEXUS_MOD_ID }}
-          changelog: ${{ github.event.head_commit.message }}
+          changelog: ${{ steps.changelog.outputs.value }}
