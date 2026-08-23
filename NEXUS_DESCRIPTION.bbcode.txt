@@ -1,0 +1,66 @@
+=============================================================
+SUMMARY FIELD (plain text, no BBCode, shown under the title)
+=============================================================
+
+Automates pricing, restocking, production runs and staff assignment.
+
+
+=============================================================
+DESCRIPTION FIELD (paste everything below this line)
+=============================================================
+
+Every feature is optional. [b]F1[/b] opens the settings panel in game, or edit the config file directly and it reloads live.
+
+[size=4][b]Pricing[/b][/size]
+Holds every product at a set percentage of market value. Reapplies on a new day and when you first place a product. Default 200 percent, the point customers start refusing.
+
+[size=4][b]Restocking[/b][/size]
+A Restock All button in the ordering terminal, or [b]F8[/b]. Fills the cart with what the shop is short of:
+[code]target    = max(shelf capacity + 1, MinimumStock)
+shortfall = target - what you already own
+boxes     = ceil(shortfall / items per box)[/code]
+Counts shelves, storage, floor boxes and anything being carried. The +1 leaves back stock. Skips products with no shelf row.
+
+[size=4][b]Manufacturing[/b][/size]
+[b]F9[/b], or a button in the machine panel, queues every run your manufactured shelves are short of, using each row's exact recipe and combinables. Runs spread across all machines rather than piling onto one.
+
+The recipe list shows whether each recipe has a shelf at all. Hovering a manufactured product shows where it stands:
+[code]Cheese Sandwich   [shelf 12/40, 25 behind]
+Fruit Salad       [NO SHELF, 50 behind][/code]
+Researched products get a marker once no locked recipe still wants them.
+
+[size=4][b]Staff[/b][/size]
+Pick your cashiers and idle staff move to where the work is.
+[list]
+[*]Cashiers and security stock once the shop is closed and empty, not when the doors shut. A customer who cannot find a free till turns thief.
+[*]Storage staff stock when no boxes are on the floor.
+[*]Technicians stock when nothing is broken and no cardboard bales are waiting.
+[*]Order fillers stock when the packaging queue is empty. Anyone mid-order is left alone.
+[*]Manufacturing staff stock when there is nothing to make, put away or refill.
+[/list]
+Borrowed staff go to storage while boxes are down, restocking once clear. All return when their real job needs doing, and their original role survives quitting.
+
+[size=4][b]Speed[/b][/size]
+[b]F5[/b] toggles a boost that survives the end-of-day reset. [b]F6[/b] is a second, faster tier. If the anti-theft door goes off, speed drops to 1x until the thief is dealt with. Damage to thieves scales with speed.
+
+[size=4][b]Sales[/b][/size]
+Puts yesterday's sales back each morning, or fills every slot with your most expensive products.
+
+[size=4][b]Building[/b][/size]
+Shrinks the placement ghost's collision slightly so grid-snapped shelves stop blocking each other. Optional switch to disable the overlap check entirely.
+
+[size=4][b]Multiplayer[/b][/size]
+Install on both. The host owns pricing, staff and sales, and sends its settings to the client. Speed is matched on both machines. A client on an older version ignores anything it does not recognise rather than disconnecting.
+
+[line]
+
+[size=4][b]Requirements[/b][/size]
+BepInEx 5.4.23.3 (x64)
+
+[size=4][b]Installation[/b][/size]
+Extract into the game folder so the DLL lands in [b]BepInEx/plugins[/b]. Run once to generate the config.
+
+[size=4][b]Notes[/b][/size]
+Settings are per machine, not saved into your world.
+
+F10, F11 and F12 write diagnostic dumps and are disabled by default.
