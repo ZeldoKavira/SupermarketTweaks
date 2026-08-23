@@ -141,5 +141,10 @@ jobs:
           # update_mod_version moves the mod page's own version to match, rather than leaving the
           # page saying one thing and the file another.
           update_mod_version: 'true'
+          # Keep the superseded version in the archive rather than letting it be replaced. It costs
+          # nothing and it is the only way back when a release turns out to break something, which
+          # matters more than usual here: the mod patches game internals, so a game update can make
+          # the newest build the broken one.
+          archive_existing_version: 'true'
           mod_id: ${{ vars.NEXUS_MOD_ID }}
           changelog: ${{ steps.changelog.outputs.value }}
