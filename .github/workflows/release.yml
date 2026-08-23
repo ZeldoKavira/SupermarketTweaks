@@ -131,7 +131,11 @@ jobs:
       # release before the Nexus page exists.
       - name: Upload to Nexus Mods
         if: env.NEXUS_API_KEY != ''
-        uses: Nexus-Mods/upload-action@main
+        # Pinned to a commit, not @main. This step is handed the Nexus API key, and @main
+        # runs whatever last landed on that branch - a compromised or simply careless push
+        # upstream would be running with the key. Dependabot can bump this; a moving branch
+        # reference cannot be reviewed at all.
+        uses: Nexus-Mods/upload-action@c96019556046053aa26044b44396cd38929daf23   # v1.0.0-beta.10
         with:
           api_key: ${{ secrets.NEXUS_API_KEY }}
           file_id: ${{ vars.NEXUS_FILE_ID }}
