@@ -125,7 +125,15 @@ jobs:
       # Needs two repository secrets and one variable:
       #   secrets.NEXUS_API_KEY   from your Nexus account settings, API tab
       #   vars.NEXUS_FILE_ID      the mod's Files tab, "API Info"
-      #   vars.NEXUS_MOD_ID       the number in the mod page URL, required for the changelog
+      #   vars.NEXUS_MOD_ID       the mod's global uid, required for the changelog. NOT the
+      #                           number in the page URL: that is the per-game mod id, and the
+      #                           changelog endpoint answers "Mod not found" for it. The uid is
+      #                           gameId << 32 | modId, and the public GraphQL API will tell you:
+      #
+      #                             curl -s -X POST https://api.nexusmods.com/v2/graphql       #                               -H "Content-Type: application/json"       #                               -d '{"query":"query { mod(modId: 238, gameId: 6766) { uid } }"}'
+      #
+      #                           The file upload uses file_id and works either way, so this only
+      #                           ever breaks the changelog, after the release has already gone out.
       #
       # Skipped rather than failed when the secret is absent, so tagging still produces a GitHub
       # release before the Nexus page exists.

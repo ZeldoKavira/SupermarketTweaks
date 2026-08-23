@@ -3,6 +3,11 @@
 The release workflow publishes the top section of this file as the Nexus changelog, so keep the
 newest version first and write it for players rather than for the repo.
 
+## 1.0.2
+
+No gameplay changes. Fixes the automated changelog, which needed the mod's global uid rather than
+the id from the page URL.
+
 ## 1.0.1
 
 No gameplay changes. First release published through the automated pipeline, to prove it works
