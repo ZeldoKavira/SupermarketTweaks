@@ -3,6 +3,11 @@
 The release workflow publishes the top section of this file as the Nexus changelog, so keep the
 newest version first and write it for players rather than for the repo.
 
+## 1.0.1
+
+No gameplay changes. First release published through the automated pipeline, to prove it works
+end to end.
+
 ## 1.0.0
 
 First release.
